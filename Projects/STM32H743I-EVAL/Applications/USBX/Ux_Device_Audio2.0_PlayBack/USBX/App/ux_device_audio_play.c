@@ -122,37 +122,54 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
 
   if (length)
   {
-    BufferCtl.wr_ptr += frame_length;
+    ULONG next_wr_ptr;
+    ULONG remaining_length = frame_length;
+    UCHAR *current_frame_ptr = frame_buffer;
+    UINT buffer_filled = UX_FALSE;
+
+    /* Calculate the write pointer position after storing the frame.  */
+    next_wr_ptr = BufferCtl.wr_ptr + frame_length;
+
+    /* Handle the case where the frame wraps around the end of the buffer.  */
+    if (next_wr_ptr > AUDIO_TOTAL_BUF_SIZE)
+    {
+      ULONG copy_length = AUDIO_TOTAL_BUF_SIZE - BufferCtl.wr_ptr;
+
+      ux_utility_memory_copy(&BufferCtl.buff[BufferCtl.wr_ptr], current_frame_ptr, copy_length);
+
+      remaining_length -= copy_length;
+      current_frame_ptr += copy_length;
+      BufferCtl.wr_ptr = 0U;
+      buffer_filled = UX_TRUE;
+    }
+
+    /* Copy the remaining portion of the frame (or the whole frame if no wrap).  */
+    ux_utility_memory_copy(&BufferCtl.buff[BufferCtl.wr_ptr], current_frame_ptr, remaining_length);
+    BufferCtl.wr_ptr += remaining_length;
 
     if (BufferCtl.wr_ptr == AUDIO_TOTAL_BUF_SIZE)
     {
-      /* All buffers are full: roll back */
       BufferCtl.wr_ptr = 0U;
-
-      if (BufferCtl.state == PLAY_BUFFER_OFFSET_UNKNOWN)
-      {
-
-        /* Start BSP play */
-        BufferCtl.state = PLAY_BUFFER_OFFSET_NONE;
-
-        /* Put a message queue  */
-        if(tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)
-        {
-          Error_Handler();
-        }
-
-      }
+      buffer_filled = UX_TRUE;
     }
 
-    if (BufferCtl.rd_enable == 0U)
+    if ((BufferCtl.rd_enable == 0U) &&
+        (next_wr_ptr >= (AUDIO_TOTAL_BUF_SIZE / 2U)))
     {
-      if (BufferCtl.wr_ptr == (AUDIO_TOTAL_BUF_SIZE / 2U))
-      {
-        BufferCtl.rd_enable = 1U;
-      }
+      BufferCtl.rd_enable = 1U;
     }
 
-    ux_utility_memory_copy(&BufferCtl.buff[BufferCtl.wr_ptr], frame_buffer, frame_length);
+    if ((BufferCtl.state == PLAY_BUFFER_OFFSET_UNKNOWN) && (buffer_filled == UX_TRUE))
+    {
+      /* Start BSP play */
+      BufferCtl.state = PLAY_BUFFER_OFFSET_NONE;
+
+      /* Put a message queue  */
+      if(tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)
+      {
+        Error_Handler();
+      }
+    }
 
   }
 
