@@ -85,11 +85,29 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
 {
   /* USER CODE BEGIN USBD_AUDIO_PlaybackStreamChange */
 
-  /* Do nothing if alternate setting is 0 (stream closed).  */
   if (alternate_setting == 0)
   {
+    /* Stop host reception and local playback when the stream closes. */
+    ux_device_class_audio_reception_stop(audio_play_stream);
+    BSP_AUDIO_OUT_Stop(0);
+
+    /* Reset buffer state so stale samples are not replayed on next start. */
+    BufferCtl.rd_enable = 0U;
+    BufferCtl.rd_ptr = 0U;
+    BufferCtl.wr_ptr = 0U;
+    BufferCtl.fptr = 0U;
+    BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
+    ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
+
     return;
   }
+
+  /* Reset local audio buffer state before starting a new playback stream. */
+  BufferCtl.rd_enable = 0U;
+  BufferCtl.rd_ptr = 0U;
+  BufferCtl.wr_ptr = 0U;
+  BufferCtl.fptr = 0U;
+  ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
 
   BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
 
@@ -120,38 +138,49 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
   /* Get access to first audio input frame.  */
   ux_device_class_audio_read_frame_get(audio_play_stream, &frame_buffer, &frame_length);
 
-  if (length)
+  if (frame_length != 0U)
   {
     ULONG next_wr_ptr;
-    ULONG remaining_length = frame_length;
+    ULONG remaining_chunk = frame_length;
+    ULONG remaining_copy = length;
     UCHAR *current_frame_ptr = frame_buffer;
     UINT buffer_filled = UX_FALSE;
+    ULONG write_index = BufferCtl.wr_ptr;
 
     /* Calculate the write pointer position after storing the frame.  */
-    next_wr_ptr = BufferCtl.wr_ptr + frame_length;
+    next_wr_ptr = write_index + frame_length;
 
-    /* Handle the case where the frame wraps around the end of the buffer.  */
-    if (next_wr_ptr > AUDIO_TOTAL_BUF_SIZE)
+    while (remaining_chunk != 0U)
     {
-      ULONG copy_length = AUDIO_TOTAL_BUF_SIZE - BufferCtl.wr_ptr;
+      ULONG space_until_wrap = AUDIO_TOTAL_BUF_SIZE - write_index;
+      ULONG segment_length = (remaining_chunk < space_until_wrap) ? remaining_chunk : space_until_wrap;
+      ULONG segment_copy = (remaining_copy < segment_length) ? remaining_copy : segment_length;
 
-      ux_utility_memory_copy(&BufferCtl.buff[BufferCtl.wr_ptr], current_frame_ptr, copy_length);
+      if (segment_copy != 0U)
+      {
+        ux_utility_memory_copy(&BufferCtl.buff[write_index], current_frame_ptr, segment_copy);
+        current_frame_ptr += segment_copy;
+        remaining_copy -= segment_copy;
+      }
 
-      remaining_length -= copy_length;
-      current_frame_ptr += copy_length;
-      BufferCtl.wr_ptr = 0U;
-      buffer_filled = UX_TRUE;
+      if (segment_length > segment_copy)
+      {
+        ux_utility_memory_set(&BufferCtl.buff[write_index + segment_copy], 0,
+                              segment_length - segment_copy);
+      }
+
+      write_index += segment_length;
+
+      if (write_index == AUDIO_TOTAL_BUF_SIZE)
+      {
+        write_index = 0U;
+        buffer_filled = UX_TRUE;
+      }
+
+      remaining_chunk -= segment_length;
     }
 
-    /* Copy the remaining portion of the frame (or the whole frame if no wrap).  */
-    ux_utility_memory_copy(&BufferCtl.buff[BufferCtl.wr_ptr], current_frame_ptr, remaining_length);
-    BufferCtl.wr_ptr += remaining_length;
-
-    if (BufferCtl.wr_ptr == AUDIO_TOTAL_BUF_SIZE)
-    {
-      BufferCtl.wr_ptr = 0U;
-      buffer_filled = UX_TRUE;
-    }
+    BufferCtl.wr_ptr = write_index;
 
     if ((BufferCtl.rd_enable == 0U) &&
         (next_wr_ptr >= (AUDIO_TOTAL_BUF_SIZE / 2U)))
