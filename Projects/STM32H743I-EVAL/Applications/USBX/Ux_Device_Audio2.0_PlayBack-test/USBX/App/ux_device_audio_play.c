@@ -93,7 +93,7 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     /* Stop host reception and local playback when the stream closes. */
     if (endpoint != UX_NULL)
     {
-      _ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
+      ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
     }
 
     BSP_AUDIO_OUT_Stop(0);
