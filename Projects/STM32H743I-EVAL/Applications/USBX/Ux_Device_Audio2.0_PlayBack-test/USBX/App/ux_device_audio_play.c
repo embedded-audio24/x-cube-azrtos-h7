@@ -24,6 +24,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "ux_device_audio_play.h"
+#include "ux_device_stack.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -92,12 +93,9 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     /* Stop host reception and local playback when the stream closes. */
     if (endpoint != UX_NULL)
     {
-      ux_device_stack_transfer_abort(&endpoint->ux_slave_endpoint_transfer_request,
-                                     UX_TRANSFER_STATUS_ABORT);
+      ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
     }
 
-    audio_play_stream->ux_device_class_audio_stream_task_state =
-      UX_DEVICE_CLASS_AUDIO_STREAM_RW_STOP;
     BSP_AUDIO_OUT_Stop(0);
 
     /* Reset buffer state so stale samples are not replayed on next start. */
