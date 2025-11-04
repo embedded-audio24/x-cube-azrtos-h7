@@ -85,10 +85,19 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
 {
   /* USER CODE BEGIN USBD_AUDIO_PlaybackStreamChange */
 
-  if (alternate_setting == 0)
+  if (alternate_setting == 0U)
   {
+    UX_SLAVE_ENDPOINT *endpoint = audio_play_stream->ux_device_class_audio_stream_endpoint;
+
     /* Stop host reception and local playback when the stream closes. */
-    ux_device_class_audio_reception_stop(audio_play_stream);
+    if (endpoint != UX_NULL)
+    {
+      ux_device_stack_transfer_abort(&endpoint->ux_slave_endpoint_transfer_request,
+                                     UX_TRANSFER_STATUS_ABORT);
+    }
+
+    audio_play_stream->ux_device_class_audio_stream_task_state =
+      UX_DEVICE_CLASS_AUDIO_STREAM_RW_STOP;
     BSP_AUDIO_OUT_Stop(0);
 
     /* Reset buffer state so stale samples are not replayed on next start. */
@@ -110,6 +119,8 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
 
   BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
+  audio_play_stream->ux_device_class_audio_stream_task_state =
+    UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
 
   /* Start reception (stream opened).  */
   ux_device_class_audio_reception_start(audio_play_stream);
