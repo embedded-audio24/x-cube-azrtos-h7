@@ -100,6 +100,49 @@ static VOID USBD_AUDIO_CleanCache(VOID *address, ULONG size)
 }
 #endif
 
+static inline uint32_t USBD_AUDIO_InterruptDisable(VOID)
+{
+  uint32_t primask;
+
+  primask = __get_PRIMASK();
+  __disable_irq();
+
+  return primask;
+}
+
+static inline VOID USBD_AUDIO_InterruptRestore(uint32_t primask)
+{
+  __set_PRIMASK(primask);
+}
+
+static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
+{
+  if (bytes == 0U)
+  {
+    return;
+  }
+
+  if (bytes > AUDIO_TOTAL_BUF_SIZE)
+  {
+    bytes = AUDIO_TOTAL_BUF_SIZE;
+  }
+
+  if (BufferCtl.fptr >= bytes)
+  {
+    BufferCtl.fptr -= bytes;
+  }
+  else
+  {
+    BufferCtl.fptr = 0U;
+  }
+
+  BufferCtl.rd_ptr += bytes;
+  if (BufferCtl.rd_ptr >= AUDIO_TOTAL_BUF_SIZE)
+  {
+    BufferCtl.rd_ptr -= AUDIO_TOTAL_BUF_SIZE;
+  }
+}
+
 static VOID USBD_AUDIO_BufferReset(VOID)
 {
   BufferCtl.rd_enable = 0U;
@@ -191,6 +234,30 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
     UCHAR *current_frame_ptr = frame_buffer;
     UINT buffer_filled = UX_FALSE;
     ULONG write_index = BufferCtl.wr_ptr;
+    uint32_t primask;
+    ULONG used_bytes;
+
+    primask = USBD_AUDIO_InterruptDisable();
+    used_bytes = BufferCtl.fptr;
+
+    if (used_bytes > AUDIO_TOTAL_BUF_SIZE)
+    {
+      used_bytes = AUDIO_TOTAL_BUF_SIZE;
+      BufferCtl.fptr = AUDIO_TOTAL_BUF_SIZE;
+    }
+
+    if ((AUDIO_TOTAL_BUF_SIZE - used_bytes) < frame_length)
+    {
+      USBD_AUDIO_InterruptRestore(primask);
+
+      /* Drop the frame to avoid overwriting samples that are still playing. */
+      ux_device_class_audio_read_frame_free(audio_play_stream);
+
+      return;
+    }
+
+    BufferCtl.fptr = used_bytes + frame_length;
+    USBD_AUDIO_InterruptRestore(primask);
 
     /* Calculate the write pointer position after storing the frame.  */
     next_wr_ptr = write_index + frame_length;
@@ -333,3 +400,19 @@ VOID usbx_audio_play_app_thread(ULONG arg)
   }
 }
 /* USER CODE END 2 */
+
+/* USER CODE BEGIN 3 */
+VOID BSP_AUDIO_OUT_HalfTransfer_CallBack(uint32_t Instance)
+{
+  UX_PARAMETER_NOT_USED(Instance);
+
+  USBD_AUDIO_PlaybackAdvance(AUDIO_TOTAL_BUF_SIZE / 2U);
+}
+
+VOID BSP_AUDIO_OUT_TransferComplete_CallBack(uint32_t Instance)
+{
+  UX_PARAMETER_NOT_USED(Instance);
+
+  USBD_AUDIO_PlaybackAdvance(AUDIO_TOTAL_BUF_SIZE / 2U);
+}
+/* USER CODE END 3 */
