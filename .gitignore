@@ -1,4 +1,9 @@
 *.settings
+
+# Generated build folder
+Debug/
+*.launch
+
 # Prerequisites
 *.d
 
