@@ -89,6 +89,8 @@ static VOID USBD_AUDIO_CleanCache(VOID *address, ULONG size)
   aligned_size = (aligned_size + 31U) & ~(uintptr_t)0x1FU;
 
   SCB_CleanDCache_by_Addr((uint32_t *)aligned_address, (int32_t)aligned_size);
+  __DSB();
+  __ISB();
 }
 #else
 static VOID USBD_AUDIO_CleanCache(VOID *address, ULONG size)
@@ -128,6 +130,8 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     UX_SLAVE_ENDPOINT *endpoint = audio_play_stream->ux_device_class_audio_stream_endpoint;
 
     /* Stop host reception and local playback when the stream closes. */
+    ux_device_class_audio_reception_stop(audio_play_stream);
+
     if (endpoint != UX_NULL)
     {
       _ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
@@ -309,6 +313,7 @@ VOID usbx_audio_play_app_thread(ULONG arg)
       case PLAY_BUFFER_OFFSET_NONE:
 
         /*DMA stream from output double buffer to codec in Circular mode launch*/
+        USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
         BSP_AUDIO_OUT_Play(0, (uint8_t*)&BufferCtl.buff[0], AUDIO_TOTAL_BUF_SIZE);
 
         break;
