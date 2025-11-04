@@ -117,6 +117,8 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
 
   BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
+  audio_play_stream->ux_device_class_audio_stream_task_state =
+    UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
 
   /* Start reception (stream opened).  */
   ux_device_class_audio_reception_start(audio_play_stream);
