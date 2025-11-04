@@ -130,7 +130,10 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     UX_SLAVE_ENDPOINT *endpoint = audio_play_stream->ux_device_class_audio_stream_endpoint;
 
     /* Stop host reception and local playback when the stream closes. */
-    ux_device_class_audio_reception_stop(audio_play_stream);
+#if defined(UX_DEVICE_STANDALONE)
+    /* Mark the standalone read task as stopped so it flushes pending frames. */
+    audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_STOP;
+#endif
 
     if (endpoint != UX_NULL)
     {
@@ -147,6 +150,11 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
 
   /* Reset local audio buffer state before starting a new playback stream. */
   USBD_AUDIO_BufferReset();
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
 
   /* Start reception (stream opened).  */
   ux_device_class_audio_reception_start(audio_play_stream);
