@@ -85,9 +85,20 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
 {
   /* USER CODE BEGIN USBD_AUDIO_PlaybackStreamChange */
 
-  /* Do nothing if alternate setting is 0 (stream closed).  */
   if (alternate_setting == 0)
   {
+    /* Stop host reception and local playback when the stream closes. */
+    ux_device_class_audio_reception_stop(audio_play_stream);
+    BSP_AUDIO_OUT_Stop(0);
+
+    /* Reset buffer state so stale samples are not replayed on next start. */
+    BufferCtl.rd_enable = 0U;
+    BufferCtl.rd_ptr = 0U;
+    BufferCtl.wr_ptr = 0U;
+    BufferCtl.fptr = 0U;
+    BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
+    ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
+
     return;
   }
 
