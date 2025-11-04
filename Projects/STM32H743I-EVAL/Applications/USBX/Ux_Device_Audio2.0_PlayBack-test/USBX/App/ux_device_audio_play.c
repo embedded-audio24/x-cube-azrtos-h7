@@ -330,6 +330,11 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
         USBD_AUDIO_CleanCache(&BufferCtl.buff[write_index], segment_length);
       }
 
+      if (segment_length != 0U)
+      {
+        USBD_AUDIO_CleanCache(&BufferCtl.buff[write_index], segment_length);
+      }
+
       write_index += segment_length;
 
       if (write_index == AUDIO_TOTAL_BUF_SIZE)
