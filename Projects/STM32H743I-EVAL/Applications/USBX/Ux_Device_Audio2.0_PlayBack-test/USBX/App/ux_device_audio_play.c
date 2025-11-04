@@ -70,7 +70,15 @@ __ALIGN_BEGIN AUDIO_OUT_BufferTypeDef  BufferCtl __ALIGN_END;
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+static VOID USBD_AUDIO_BufferReset(VOID)
+{
+  BufferCtl.rd_enable = 0U;
+  BufferCtl.rd_ptr = 0U;
+  BufferCtl.wr_ptr = 0U;
+  BufferCtl.fptr = 0U;
+  BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
+  ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
+}
 /* USER CODE END 0 */
 
 /**
@@ -93,33 +101,19 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     /* Stop host reception and local playback when the stream closes. */
     if (endpoint != UX_NULL)
     {
-      ux_device_stack_transfer_abort(&endpoint->ux_slave_endpoint_transfer_request,
-                                     UX_TRANSFER_STATUS_ABORT);
+      _ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
     }
 
     BSP_AUDIO_OUT_Stop(0);
 
     /* Reset buffer state so stale samples are not replayed on next start. */
-    BufferCtl.rd_enable = 0U;
-    BufferCtl.rd_ptr = 0U;
-    BufferCtl.wr_ptr = 0U;
-    BufferCtl.fptr = 0U;
-    BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
-    ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
+    USBD_AUDIO_BufferReset();
 
     return;
   }
 
   /* Reset local audio buffer state before starting a new playback stream. */
-  BufferCtl.rd_enable = 0U;
-  BufferCtl.rd_ptr = 0U;
-  BufferCtl.wr_ptr = 0U;
-  BufferCtl.fptr = 0U;
-  ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
-
-  BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
-  audio_play_stream->ux_device_class_audio_stream_task_state =
-    UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+  USBD_AUDIO_BufferReset();
 
   /* Start reception (stream opened).  */
   ux_device_class_audio_reception_start(audio_play_stream);
