@@ -71,6 +71,139 @@ __ALIGN_BEGIN AUDIO_OUT_BufferTypeDef  BufferCtl __ALIGN_END;
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+static HAL_StatusTypeDef USBD_AUDIO_SAIClockConfigure(uint32_t sample_rate,
+                                                     uint64_t periph_clock,
+                                                     uint32_t clock_source);
+static uint32_t USBD_AUDIO_SAIClockFraction(uint32_t sample_rate,
+                                            uint32_t multiplier,
+                                            uint32_t pll2m,
+                                            uint32_t pll2p,
+                                            uint32_t pll2n);
+
+HAL_StatusTypeDef MX_SAI1_ClockConfig(SAI_HandleTypeDef *hsai,
+                                      uint32_t SampleRate)
+{
+  UX_PARAMETER_NOT_USED(hsai);
+
+  return USBD_AUDIO_SAIClockConfigure(SampleRate,
+                                      RCC_PERIPHCLK_SAI1,
+                                      RCC_SAI1CLKSOURCE_PLL2);
+}
+
+#if defined(RCC_PERIPHCLK_SAI4A)
+HAL_StatusTypeDef MX_SAI4_ClockConfig(SAI_HandleTypeDef *hsai,
+                                      uint32_t SampleRate)
+{
+  UX_PARAMETER_NOT_USED(hsai);
+
+  return USBD_AUDIO_SAIClockConfigure(SampleRate,
+                                      RCC_PERIPHCLK_SAI4A,
+                                      RCC_SAI4ACLKSOURCE_PLL2);
+}
+#endif
+
+static HAL_StatusTypeDef USBD_AUDIO_SAIClockConfigure(uint32_t sample_rate,
+                                                     uint64_t periph_clock,
+                                                     uint32_t clock_source)
+{
+  RCC_PeriphCLKInitTypeDef clk_config;
+  HAL_StatusTypeDef status;
+  uint32_t pll2_fraction = 0U;
+
+  ux_utility_memory_set(&clk_config, 0, sizeof(clk_config));
+
+  clk_config.PeriphClockSelection = periph_clock;
+  clk_config.PLL2.PLL2M = 25U;
+  clk_config.PLL2.PLL2N = 344U;
+  clk_config.PLL2.PLL2P = 7U;
+  clk_config.PLL2.PLL2Q = 2U;
+  clk_config.PLL2.PLL2R = 2U;
+  clk_config.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_2;
+  clk_config.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
+
+  if ((sample_rate == AUDIO_FREQUENCY_48K) ||
+      (sample_rate == AUDIO_FREQUENCY_96K) ||
+      (sample_rate == AUDIO_FREQUENCY_192K) ||
+      (sample_rate == AUDIO_FREQUENCY_32K) ||
+      (sample_rate == AUDIO_FREQUENCY_16K) ||
+      (sample_rate == AUDIO_FREQUENCY_8K))
+  {
+    pll2_fraction = USBD_AUDIO_SAIClockFraction(sample_rate,
+                                                1024U,
+                                                clk_config.PLL2.PLL2M,
+                                                clk_config.PLL2.PLL2P,
+                                                clk_config.PLL2.PLL2N);
+  }
+  else if ((sample_rate == AUDIO_FREQUENCY_44K) ||
+           (sample_rate == AUDIO_FREQUENCY_22K) ||
+           (sample_rate == AUDIO_FREQUENCY_11K) ||
+           (sample_rate == AUDIO_FREQUENCY_88K) ||
+           (sample_rate == AUDIO_FREQUENCY_176K))
+  {
+    clk_config.PLL2.PLL2P = 38U;
+    clk_config.PLL2.PLL2N = 429U;
+    pll2_fraction = USBD_AUDIO_SAIClockFraction(sample_rate,
+                                                256U,
+                                                clk_config.PLL2.PLL2M,
+                                                clk_config.PLL2.PLL2P,
+                                                clk_config.PLL2.PLL2N);
+  }
+
+  clk_config.PLL2.PLL2FRACN = pll2_fraction;
+
+  if (periph_clock == RCC_PERIPHCLK_SAI1)
+  {
+    clk_config.Sai1ClockSelection = clock_source;
+  }
+#if defined(RCC_PERIPHCLK_SAI4A)
+  else if (periph_clock == RCC_PERIPHCLK_SAI4A)
+  {
+    clk_config.Sai4AClockSelection = clock_source;
+  }
+#endif
+  else
+  {
+    return HAL_ERROR;
+  }
+
+  status = HAL_RCCEx_PeriphCLKConfig(&clk_config);
+
+  return status;
+}
+
+static uint32_t USBD_AUDIO_SAIClockFraction(uint32_t sample_rate,
+                                            uint32_t multiplier,
+                                            uint32_t pll2m,
+                                            uint32_t pll2p,
+                                            uint32_t pll2n)
+{
+  uint64_t numerator;
+  uint64_t denominator;
+  uint64_t integer_component;
+
+  numerator = (uint64_t)sample_rate * (uint64_t)multiplier;
+  numerator *= (uint64_t)pll2p * (uint64_t)pll2m;
+  denominator = (uint64_t)HSE_VALUE;
+
+  integer_component = numerator / denominator;
+  if (integer_component != (uint64_t)pll2n)
+  {
+    return 0U;
+  }
+
+  numerator -= integer_component * denominator;
+
+  numerator = (numerator * 8192ULL) + (denominator / 2ULL);
+  numerator /= denominator;
+
+  if (numerator > 8191ULL)
+  {
+    numerator = 8191ULL;
+  }
+
+  return (uint32_t)numerator;
+}
+
 #if defined(SCB_CCR_DC_Msk)
 static VOID USBD_AUDIO_CleanCache(VOID *address, ULONG size)
 {
@@ -139,10 +272,6 @@ static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
 }
 
 #if !defined(UX_DEVICE_STANDALONE)
-static UINT USBD_AUDIO_StopPending;
-static TX_SEMAPHORE USBD_AUDIO_StopSemaphore;
-static UINT USBD_AUDIO_StopSemaphoreReady;
-
 static VOID USBD_AUDIO_StopSemaphorePrepare(VOID)
 {
   if (USBD_AUDIO_StopSemaphoreReady == UX_FALSE)
@@ -188,36 +317,28 @@ static VOID USBD_AUDIO_StopWaitForCompletion(ULONG timeout_ms)
 
 static VOID USBD_AUDIO_SpaceSemaphoreEnsureReady(VOID)
 {
-  if ((USBD_AUDIO_StopSemaphoreReady != UX_FALSE) &&
-      (USBD_AUDIO_StopPending != UX_FALSE))
+#if !defined(UX_DEVICE_STANDALONE)
+  if (USBD_AUDIO_SpaceSemaphoreReady == UX_FALSE)
   {
-    ULONG wait_ticks;
-
-    wait_ticks = USBD_AUDIO_MillisecondsToTicks(timeout_ms);
-    if (wait_ticks == 0U)
+    if (tx_semaphore_create(&USBD_AUDIO_SpaceSemaphore, "audio_space", 0U) == TX_SUCCESS)
     {
-      wait_ticks = 1U;
-    }
-
-    while (USBD_AUDIO_StopPending != UX_FALSE)
-    {
-      if (tx_semaphore_get(&USBD_AUDIO_StopSemaphore, wait_ticks) != TX_SUCCESS)
-      {
-        break;
-      }
+      USBD_AUDIO_SpaceSemaphoreReady = UX_TRUE;
     }
   }
-}
-#endif
 
-static VOID USBD_AUDIO_StopSemaphoreSignal(VOID)
-{
-  if (USBD_AUDIO_StopSemaphoreReady != UX_FALSE)
+  if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
   {
-    tx_semaphore_ceiling_put(&USBD_AUDIO_StopSemaphore, 1U);
+    while (tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_NO_WAIT) == TX_SUCCESS)
+    {
+      /* Drain stale space completions before waiting on a new one. */
+    }
+
+    tx_semaphore_ceiling_put(&USBD_AUDIO_SpaceSemaphore, 1U);
   }
-}
+#else
+  /* No semaphore needed when running in standalone mode. */
 #endif
+}
 
 static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 {
