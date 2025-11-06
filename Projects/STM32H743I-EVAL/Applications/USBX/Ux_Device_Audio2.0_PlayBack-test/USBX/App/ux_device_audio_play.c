@@ -193,6 +193,15 @@ static VOID USBD_AUDIO_StopWaitForCompletion(ULONG timeout_ms)
 }
 #endif
 
+static VOID USBD_AUDIO_StopSemaphoreSignal(VOID)
+{
+  if (USBD_AUDIO_StopSemaphoreReady != UX_FALSE)
+  {
+    tx_semaphore_ceiling_put(&USBD_AUDIO_StopSemaphore, 1U);
+  }
+}
+#endif
+
 static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 {
   ULONG used_bytes;
