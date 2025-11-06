@@ -160,11 +160,9 @@ static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 
   if ((AUDIO_TOTAL_BUF_SIZE - used_bytes) >= length)
   {
-    BufferCtl.fptr = used_bytes + length;
-    used_bytes = BufferCtl.fptr;
     USBD_AUDIO_InterruptRestore(primask);
 
-    return used_bytes;
+    return length;
   }
 
   USBD_AUDIO_InterruptRestore(primask);
@@ -186,11 +184,9 @@ static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 
     if ((AUDIO_TOTAL_BUF_SIZE - used_bytes) >= length)
     {
-      BufferCtl.fptr = used_bytes + length;
-      used_bytes = BufferCtl.fptr;
       USBD_AUDIO_InterruptRestore(primask);
 
-      return used_bytes;
+      return length;
     }
 
     USBD_AUDIO_InterruptRestore(primask);
@@ -205,6 +201,34 @@ static ULONG USBD_AUDIO_BufferReserve(ULONG length)
     }
   }
 #endif
+}
+
+static ULONG USBD_AUDIO_BufferCommit(ULONG length)
+{
+  ULONG used_bytes;
+  uint32_t primask;
+
+  if (length == 0U)
+  {
+    primask = USBD_AUDIO_InterruptDisable();
+    used_bytes = BufferCtl.fptr;
+    USBD_AUDIO_InterruptRestore(primask);
+
+    return used_bytes;
+  }
+
+  primask = USBD_AUDIO_InterruptDisable();
+  used_bytes = BufferCtl.fptr + length;
+
+  if (used_bytes > AUDIO_TOTAL_BUF_SIZE)
+  {
+    used_bytes = AUDIO_TOTAL_BUF_SIZE;
+  }
+
+  BufferCtl.fptr = used_bytes;
+  USBD_AUDIO_InterruptRestore(primask);
+
+  return used_bytes;
 }
 
 static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
@@ -337,8 +361,8 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
 
   UCHAR *frame_buffer;
   ULONG frame_length;
-  ULONG reserved_bytes;
-
+  ULONG reserve_result;
+  
   /* Get access to first audio input frame.  */
   ux_device_class_audio_read_frame_get(audio_play_stream, &frame_buffer, &frame_length);
 
@@ -349,16 +373,18 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
     ULONG write_index = BufferCtl.wr_ptr;
     ULONG queued_bytes;
 
-    reserved_bytes = USBD_AUDIO_BufferReserve(frame_length);
+    reserve_result = USBD_AUDIO_BufferReserve(frame_length);
 
 #if defined(UX_DEVICE_STANDALONE)
-    if (reserved_bytes > AUDIO_TOTAL_BUF_SIZE)
+    if (reserve_result > AUDIO_TOTAL_BUF_SIZE)
     {
       /* Not enough room and cannot wait in standalone mode, drop the frame. */
       ux_device_class_audio_read_frame_free(audio_play_stream);
 
       return;
     }
+#else
+    UX_PARAMETER_NOT_USED(reserve_result);
 #endif
 
     while (remaining_chunk != 0U)
@@ -386,7 +412,7 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
 
     BufferCtl.wr_ptr = write_index;
 
-    queued_bytes = reserved_bytes;
+    queued_bytes = USBD_AUDIO_BufferCommit(frame_length);
 
     if (queued_bytes > AUDIO_TOTAL_BUF_SIZE)
     {
