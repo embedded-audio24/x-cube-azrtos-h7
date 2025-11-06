@@ -50,6 +50,20 @@
 /* USER CODE BEGIN PV */
 extern TX_QUEUE ux_app_MsgQueue;
 
+/* Debug logging support was removed, but provide no-op compatibility stubs so
+ * any lingering build references resolve without pulling the instrumentation
+ * back in. */
+VOID USBD_AUDIO_DebugLogReset(VOID)
+{
+}
+
+VOID USBD_AUDIO_DebugLogWrite(ULONG event, ULONG value0, ULONG value1)
+{
+  UX_PARAMETER_NOT_USED(event);
+  UX_PARAMETER_NOT_USED(value0);
+  UX_PARAMETER_NOT_USED(value1);
+}
+
 /* Set BufferCtl start address to "0x24040000" */
 #if defined ( __ICCARM__ ) /* IAR Compiler */
 #pragma location = 0x24040000
@@ -274,6 +288,32 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   }
 
   USBD_AUDIO_BufferReset();
+  USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_STREAM_OPEN, alternate_setting, 0U);
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
 
   ux_device_class_audio_reception_start(audio_play_stream);
 
@@ -430,6 +470,7 @@ VOID usbx_audio_play_app_thread(ULONG arg)
 
         USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
         BSP_AUDIO_OUT_Play(0, (uint8_t*)&BufferCtl.buff[0], AUDIO_TOTAL_BUF_SIZE);
+        USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_PLAYBACK_START, BufferCtl.fptr, 3U);
 
         break;
 
