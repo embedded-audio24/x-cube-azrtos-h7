@@ -309,6 +309,9 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
   uint32_t primask;
   ULONG start_index;
   ULONG consumed_bytes;
+  ULONG underrun_bytes = 0U;
+  ULONG zero_start = 0U;
+  ULONG zero_length = 0U;
 
   if (bytes == 0U)
   {
@@ -322,6 +325,7 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 
   primask = USBD_AUDIO_InterruptDisable();
 
+  start_index = BufferCtl.rd_ptr;
   consumed_bytes = bytes;
   if (BufferCtl.fptr >= consumed_bytes)
   {
@@ -331,20 +335,39 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
   {
     consumed_bytes = BufferCtl.fptr;
     BufferCtl.fptr = 0U;
+    underrun_bytes = bytes - consumed_bytes;
   }
 
-  start_index = BufferCtl.rd_ptr;
   BufferCtl.rd_ptr += consumed_bytes;
   if (BufferCtl.rd_ptr >= AUDIO_TOTAL_BUF_SIZE)
   {
     BufferCtl.rd_ptr -= AUDIO_TOTAL_BUF_SIZE;
   }
 
+  if (BufferCtl.fptr == 0U)
+  {
+    BufferCtl.rd_enable = 0U;
+    zero_start = start_index;
+    zero_length = consumed_bytes;
+  }
+
   USBD_AUDIO_InterruptRestore(primask);
 
-  if (consumed_bytes != 0U)
+  if (zero_length != 0U)
   {
-    USBD_AUDIO_BufferZero(start_index, consumed_bytes);
+    USBD_AUDIO_BufferZero(zero_start, zero_length);
+  }
+
+  if (underrun_bytes != 0U)
+  {
+    ULONG underrun_start = start_index + consumed_bytes;
+
+    if (underrun_start >= AUDIO_TOTAL_BUF_SIZE)
+    {
+      underrun_start -= AUDIO_TOTAL_BUF_SIZE;
+    }
+
+    USBD_AUDIO_BufferZero(underrun_start, underrun_bytes);
   }
 
   if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
@@ -475,6 +498,11 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   USBD_AUDIO_DebugLogReset();
   USBD_AUDIO_BufferReset();
   USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_STREAM_OPEN, alternate_setting, 0U);
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
 
 #if defined(UX_DEVICE_STANDALONE)
   /* Make sure the standalone read task restarts immediately. */
