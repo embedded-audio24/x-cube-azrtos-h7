@@ -133,19 +133,6 @@ static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
   return ticks;
 }
 
-static UINT USBD_AUDIO_PlaybackIsActive(VOID)
-{
-  UINT active;
-  uint32_t primask;
-
-  primask = USBD_AUDIO_InterruptDisable();
-  active = BufferCtl.rd_enable;
-  USBD_AUDIO_InterruptRestore(primask);
-
-  return active;
-}
-
-
 static VOID USBD_AUDIO_SpaceSemaphoreEnsureReady(VOID)
 {
   if (USBD_AUDIO_SpaceSemaphoreReady == UX_FALSE)
@@ -389,11 +376,13 @@ static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
   ULONG used_bytes;
   ULONG elapsed_ms;
 
-  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  if (timeout_ms == 0U)
   {
     return;
   }
 
+  /* Poll the buffered byte count directly—the playback flag may already be
+     lowered even while the DMA drains the final samples. */
   used_bytes = USBD_AUDIO_BufferReserve(0U);
   for (elapsed_ms = 0U; (used_bytes != 0U) && (elapsed_ms < timeout_ms); elapsed_ms++)
   {
@@ -406,11 +395,13 @@ static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
   ULONG timeout_ticks;
   ULONG sleep_ticks;
 
-  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  if (timeout_ms == 0U)
   {
     return;
   }
 
+  /* Poll the buffered byte count directly—the playback flag may already be
+     lowered even while the DMA drains the final samples. */
   used_bytes = USBD_AUDIO_BufferReserve(0U);
   if (used_bytes == 0U)
   {
@@ -470,6 +461,8 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     {
       _ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
     }
+
+    BSP_AUDIO_OUT_Mute(0);
 
     USBD_AUDIO_WaitForPlaybackDrain(1000U);
 
@@ -672,6 +665,7 @@ VOID usbx_audio_play_app_thread(ULONG arg)
         /*DMA stream from output double buffer to codec in Circular mode launch*/
         USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
         BSP_AUDIO_OUT_Play(0, (uint8_t*)&BufferCtl.buff[0], AUDIO_TOTAL_BUF_SIZE);
+        BSP_AUDIO_OUT_UnMute(0);
 
         break;
 
