@@ -6,6 +6,6 @@ The audio playback path required three adjustments to eliminate the end-of-track
 
 2. **Draining playback gracefully.** When the host closes the stream we wait briefly for the DMA engine to finish the queued samples before stopping the codec and we reset the buffer state. This keeps the media player from hanging on completion while ensuring the next playback starts from silence.
 
-3. **Zeroing consumed buffers.** Each DMA half-transfer callback clears the region that was just rendered (and any underrun span) so no previously played audio can loop when the host stops sending data.
+3. **Zeroing consumed buffers.** Each DMA half-transfer callback clears only the region that was just rendered (and any underrun span) so no previously played audio can loop when the host stops sending data while leaving in-flight USB writes untouched.
 
 These targeted fixes match the structure of commit `803ba31` while preserving the behaviour improvements needed for reliable playback.

@@ -200,6 +200,8 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 
   if (consumed_bytes != 0U)
   {
+    /* Clear only the samples that the DMA actually rendered so the next stream
+       begins from silence without touching regions the host may still fill. */
     USBD_AUDIO_BufferZero(start_index, consumed_bytes);
   }
 
@@ -381,6 +383,8 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
       if ((BufferCtl.rd_enable == 0U) &&
           (BufferCtl.fptr >= (AUDIO_TOTAL_BUF_SIZE / 2U)))
       {
+        /* Match the original behaviour: start playback only after at least
+           half the ring is primed to keep the DMA ahead of the host writes. */
         BufferCtl.rd_enable = 1U;
       }
 
@@ -392,10 +396,6 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
         {
           Error_Handler();
         }
-      }
-      else
-      {
-        USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_PLAYBACK_START, queued_bytes, 2U);
       }
     }
   }
