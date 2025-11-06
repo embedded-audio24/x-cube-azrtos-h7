@@ -751,11 +751,11 @@ VOID usbx_audio_play_app_thread(ULONG arg)
       case PLAY_BUFFER_OFFSET_STOP:
 
         USBD_AUDIO_WaitForPlaybackDrain(1000U);
-        BSP_AUDIO_OUT_Pause(0);
 #if !defined(UX_DEVICE_STANDALONE)
         {
           ULONG settle_ticks;
 
+          /* Let the mute propagate for a moment before stopping the SAI. */
           settle_ticks = USBD_AUDIO_MillisecondsToTicks(2U);
           if (settle_ticks == 0U)
           {
