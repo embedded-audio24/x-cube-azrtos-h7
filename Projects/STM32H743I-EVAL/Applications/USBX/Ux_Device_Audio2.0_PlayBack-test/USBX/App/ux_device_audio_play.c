@@ -100,6 +100,164 @@ static VOID USBD_AUDIO_CleanCache(VOID *address, ULONG size)
 }
 #endif
 
+static inline uint32_t USBD_AUDIO_InterruptDisable(VOID)
+{
+  uint32_t primask;
+
+  primask = __get_PRIMASK();
+  __disable_irq();
+
+  return primask;
+}
+
+static inline VOID USBD_AUDIO_InterruptRestore(uint32_t primask)
+{
+  __set_PRIMASK(primask);
+}
+
+static TX_SEMAPHORE USBD_AUDIO_SpaceSemaphore;
+static UINT USBD_AUDIO_SpaceSemaphoreReady;
+
+static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
+{
+  ULONG ticks;
+
+  ticks = (milliseconds * (ULONG)TX_TIMER_TICKS_PER_SECOND) + 999U;
+  ticks /= 1000U;
+
+  if ((ticks == 0U) && (milliseconds != 0U))
+  {
+    ticks = 1U;
+  }
+
+  return ticks;
+}
+
+static UINT USBD_AUDIO_PlaybackIsActive(VOID)
+{
+  UINT active;
+  uint32_t primask;
+
+  primask = USBD_AUDIO_InterruptDisable();
+  active = BufferCtl.rd_enable;
+  USBD_AUDIO_InterruptRestore(primask);
+
+  return active;
+}
+
+
+static VOID USBD_AUDIO_SpaceSemaphoreEnsureReady(VOID)
+{
+  if (USBD_AUDIO_SpaceSemaphoreReady == UX_FALSE)
+  {
+    if (tx_semaphore_create(&USBD_AUDIO_SpaceSemaphore, "audio_space", 0U) == TX_SUCCESS)
+    {
+      USBD_AUDIO_SpaceSemaphoreReady = UX_TRUE;
+    }
+  }
+}
+
+static ULONG USBD_AUDIO_BufferReserve(ULONG length)
+{
+  ULONG used_bytes;
+  uint32_t primask;
+
+  if (length == 0U)
+  {
+    primask = USBD_AUDIO_InterruptDisable();
+    used_bytes = BufferCtl.fptr;
+    USBD_AUDIO_InterruptRestore(primask);
+
+    return used_bytes;
+  }
+
+  if (length > AUDIO_TOTAL_BUF_SIZE)
+  {
+    length = AUDIO_TOTAL_BUF_SIZE;
+  }
+
+#if defined(UX_DEVICE_STANDALONE)
+  primask = USBD_AUDIO_InterruptDisable();
+  used_bytes = BufferCtl.fptr;
+
+  if (used_bytes > AUDIO_TOTAL_BUF_SIZE)
+  {
+    used_bytes = AUDIO_TOTAL_BUF_SIZE;
+    BufferCtl.fptr = AUDIO_TOTAL_BUF_SIZE;
+  }
+
+  if ((AUDIO_TOTAL_BUF_SIZE - used_bytes) >= length)
+  {
+    USBD_AUDIO_InterruptRestore(primask);
+
+    return length;
+  }
+
+  USBD_AUDIO_InterruptRestore(primask);
+
+  return AUDIO_TOTAL_BUF_SIZE + 1U;
+#else
+  USBD_AUDIO_SpaceSemaphoreEnsureReady();
+
+  while (1)
+  {
+    primask = USBD_AUDIO_InterruptDisable();
+    used_bytes = BufferCtl.fptr;
+
+    if (used_bytes > AUDIO_TOTAL_BUF_SIZE)
+    {
+      used_bytes = AUDIO_TOTAL_BUF_SIZE;
+      BufferCtl.fptr = AUDIO_TOTAL_BUF_SIZE;
+    }
+
+    if ((AUDIO_TOTAL_BUF_SIZE - used_bytes) >= length)
+    {
+      USBD_AUDIO_InterruptRestore(primask);
+
+      return length;
+    }
+
+    USBD_AUDIO_InterruptRestore(primask);
+    if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
+    {
+      tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_WAIT_FOREVER);
+    }
+    else
+    {
+      tx_thread_relinquish();
+    }
+  }
+#endif
+}
+
+static ULONG USBD_AUDIO_BufferCommit(ULONG length)
+{
+  ULONG used_bytes;
+  uint32_t primask;
+
+  if (length == 0U)
+  {
+    primask = USBD_AUDIO_InterruptDisable();
+    used_bytes = BufferCtl.fptr;
+    USBD_AUDIO_InterruptRestore(primask);
+
+    return used_bytes;
+  }
+
+  primask = USBD_AUDIO_InterruptDisable();
+  used_bytes = BufferCtl.fptr + length;
+
+  if (used_bytes > AUDIO_TOTAL_BUF_SIZE)
+  {
+    used_bytes = AUDIO_TOTAL_BUF_SIZE;
+  }
+
+  BufferCtl.fptr = used_bytes;
+  USBD_AUDIO_InterruptRestore(primask);
+
+  return used_bytes;
+}
+
 static VOID USBD_AUDIO_BufferZero(ULONG start_index, ULONG length)
 {
   ULONG remaining = length;
@@ -111,8 +269,9 @@ static VOID USBD_AUDIO_BufferZero(ULONG start_index, ULONG length)
 
   while (remaining != 0U)
   {
-    ULONG segment_length = AUDIO_TOTAL_BUF_SIZE - start_index;
+    ULONG segment_length;
 
+    segment_length = AUDIO_TOTAL_BUF_SIZE - start_index;
     if (segment_length > remaining)
     {
       segment_length = remaining;
@@ -131,22 +290,14 @@ static VOID USBD_AUDIO_BufferZero(ULONG start_index, ULONG length)
   }
 }
 
-static VOID USBD_AUDIO_BufferReset(VOID)
-{
-  BufferCtl.rd_enable = 0U;
-  BufferCtl.rd_ptr = 0U;
-  BufferCtl.wr_ptr = 0U;
-  BufferCtl.fptr = 0U;
-  BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
-  ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
-  USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
-}
-
 static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 {
-  ULONG consumed_bytes;
-  ULONG underrun_bytes;
+  uint32_t primask;
   ULONG start_index;
+  ULONG consumed_bytes;
+  ULONG underrun_bytes = 0U;
+  ULONG zero_consumed_start = 0U;
+  ULONG zero_consumed_length = 0U;
 
   if (bytes == 0U)
   {
@@ -158,22 +309,23 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
     bytes = AUDIO_TOTAL_BUF_SIZE;
   }
 
-  start_index = BufferCtl.rd_ptr;
+  primask = USBD_AUDIO_InterruptDisable();
 
-  if (BufferCtl.fptr >= bytes)
+  start_index = BufferCtl.rd_ptr;
+  zero_consumed_start = start_index;
+  consumed_bytes = bytes;
+  if (BufferCtl.fptr >= consumed_bytes)
   {
-    consumed_bytes = bytes;
-    BufferCtl.fptr -= bytes;
+    BufferCtl.fptr -= consumed_bytes;
   }
   else
   {
     consumed_bytes = BufferCtl.fptr;
     BufferCtl.fptr = 0U;
+    underrun_bytes = bytes - consumed_bytes;
   }
 
-  underrun_bytes = bytes - consumed_bytes;
-
-  BufferCtl.rd_ptr += bytes;
+  BufferCtl.rd_ptr = start_index + bytes;
   if (BufferCtl.rd_ptr >= AUDIO_TOTAL_BUF_SIZE)
   {
     BufferCtl.rd_ptr -= AUDIO_TOTAL_BUF_SIZE;
@@ -184,11 +336,13 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
     BufferCtl.rd_enable = 0U;
   }
 
-  if (consumed_bytes != 0U)
+  zero_consumed_length = consumed_bytes;
+
+  USBD_AUDIO_InterruptRestore(primask);
+
+  if (zero_consumed_length != 0U)
   {
-    /* Clear only the samples that the DMA actually rendered so the next stream
-       begins from silence without touching regions the host may still fill. */
-    USBD_AUDIO_BufferZero(start_index, consumed_bytes);
+    USBD_AUDIO_BufferZero(zero_consumed_start, zero_consumed_length);
   }
 
   if (underrun_bytes != 0U)
@@ -202,43 +356,91 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 
     USBD_AUDIO_BufferZero(underrun_start, underrun_bytes);
   }
+
+  if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
+  {
+    tx_semaphore_ceiling_put(&USBD_AUDIO_SpaceSemaphore, 1U);
+  }
+}
+
+static VOID USBD_AUDIO_BufferReset(VOID)
+{
+  BufferCtl.rd_enable = 0U;
+  BufferCtl.rd_ptr = 0U;
+  BufferCtl.wr_ptr = 0U;
+  BufferCtl.fptr = 0U;
+  BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
+  ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
+  USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
+
+  if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
+  {
+    while (tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_NO_WAIT) == TX_SUCCESS)
+    {
+      /* Drain the semaphore to avoid stale wakeups after a reset. */
+    }
+    tx_semaphore_ceiling_put(&USBD_AUDIO_SpaceSemaphore, 1U);
+  }
 }
 
 static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
 {
-  if ((timeout_ms == 0U) || (BufferCtl.rd_enable == 0U))
+#if defined(UX_DEVICE_STANDALONE)
+  ULONG used_bytes;
+  ULONG elapsed_ms;
+
+  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
   {
     return;
   }
 
-  ULONG timeout_ticks = MS_TO_TICK(timeout_ms);
-  ULONG sleep_ticks = MS_TO_TICK(1U);
-  ULONG start_tick = tx_time_get();
-
-  if ((timeout_ms != 0U) && (timeout_ticks == 0U))
+  used_bytes = USBD_AUDIO_BufferReserve(0U);
+  for (elapsed_ms = 0U; (used_bytes != 0U) && (elapsed_ms < timeout_ms); elapsed_ms++)
   {
-    timeout_ticks = 1U;
+    ux_utility_delay_ms(1U);
+    used_bytes = USBD_AUDIO_BufferReserve(0U);
+  }
+#else
+  ULONG used_bytes;
+  ULONG start_tick;
+  ULONG timeout_ticks;
+  ULONG sleep_ticks;
+
+  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  {
+    return;
   }
 
+  used_bytes = USBD_AUDIO_BufferReserve(0U);
+  if (used_bytes == 0U)
+  {
+    return;
+  }
+
+  timeout_ticks = USBD_AUDIO_MillisecondsToTicks(timeout_ms);
+  sleep_ticks = USBD_AUDIO_MillisecondsToTicks(1U);
   if (sleep_ticks == 0U)
   {
     sleep_ticks = 1U;
   }
 
-  while ((BufferCtl.fptr != 0U) && (BufferCtl.rd_enable != 0U))
-  {
-    if (timeout_ms != 0U)
-    {
-      ULONG elapsed = tx_time_get() - start_tick;
+  start_tick = tx_time_get();
 
-      if (elapsed >= timeout_ticks)
-      {
-        break;
-      }
+  while (used_bytes != 0U)
+  {
+    ULONG current_tick;
+
+    current_tick = tx_time_get();
+    if ((current_tick - start_tick) >= timeout_ticks)
+    {
+      break;
     }
 
     tx_thread_sleep(sleep_ticks);
+
+    used_bytes = USBD_AUDIO_BufferReserve(0U);
   }
+#endif
 }
 /* USER CODE END 0 */
 
@@ -258,6 +460,11 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   if (alternate_setting == 0U)
   {
     UX_SLAVE_ENDPOINT *endpoint = audio_play_stream->ux_device_class_audio_stream_endpoint;
+    /* Stop host reception and local playback when the stream closes. */
+#if defined(UX_DEVICE_STANDALONE)
+    /* Mark the standalone read task as stopped so it flushes pending frames. */
+    audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_STOP;
+#endif
 
     if (endpoint != UX_NULL)
     {
@@ -268,17 +475,21 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
 
     BSP_AUDIO_OUT_Stop(0);
 
+    /* Reset buffer state so stale samples are not replayed on next start. */
     USBD_AUDIO_BufferReset();
 
     return;
   }
 
+  /* Reset local audio buffer state before starting a new playback stream. */
   USBD_AUDIO_BufferReset();
+
 #if defined(UX_DEVICE_STANDALONE)
   /* Make sure the standalone read task restarts immediately. */
   audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
 #endif
 
+  /* Start reception (stream opened).  */
   ux_device_class_audio_reception_start(audio_play_stream);
 
   /* USER CODE END USBD_AUDIO_PlaybackStreamChange */
@@ -303,67 +514,85 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
 
   UCHAR *frame_buffer;
   ULONG frame_length;
-
+  ULONG reserve_result;
+  
+  /* Get access to first audio input frame.  */
   ux_device_class_audio_read_frame_get(audio_play_stream, &frame_buffer, &frame_length);
 
-  if ((frame_length != 0U) && (frame_length <= AUDIO_TOTAL_BUF_SIZE))
+  if (frame_length != 0U)
   {
-    if ((AUDIO_TOTAL_BUF_SIZE - BufferCtl.fptr) >= frame_length)
+    ULONG remaining_chunk = frame_length;
+    UCHAR *current_frame_ptr = frame_buffer;
+    ULONG write_index = BufferCtl.wr_ptr;
+    ULONG queued_bytes;
+
+    reserve_result = USBD_AUDIO_BufferReserve(frame_length);
+
+#if defined(UX_DEVICE_STANDALONE)
+    if (reserve_result > AUDIO_TOTAL_BUF_SIZE)
     {
-      ULONG remaining_length = frame_length;
-      UCHAR *current_frame_ptr = frame_buffer;
-      ULONG write_index = BufferCtl.wr_ptr;
+      /* Not enough room and cannot wait in standalone mode, drop the frame. */
+      ux_device_class_audio_read_frame_free(audio_play_stream);
 
-      while (remaining_length != 0U)
+      return;
+    }
+#else
+    UX_PARAMETER_NOT_USED(reserve_result);
+#endif
+
+    while (remaining_chunk != 0U)
+    {
+      ULONG space_until_wrap = AUDIO_TOTAL_BUF_SIZE - write_index;
+      ULONG segment_length = (remaining_chunk < space_until_wrap) ? remaining_chunk : space_until_wrap;
+
+      ux_utility_memory_copy(&BufferCtl.buff[write_index], current_frame_ptr, segment_length);
+      current_frame_ptr += segment_length;
+
+      if (segment_length != 0U)
       {
-        ULONG space_until_wrap = AUDIO_TOTAL_BUF_SIZE - write_index;
-        ULONG segment_length = (remaining_length < space_until_wrap) ? remaining_length : space_until_wrap;
-
-        ux_utility_memory_copy(&BufferCtl.buff[write_index], current_frame_ptr, segment_length);
         USBD_AUDIO_CleanCache(&BufferCtl.buff[write_index], segment_length);
-
-        current_frame_ptr += segment_length;
-        write_index += segment_length;
-
-        if (write_index == AUDIO_TOTAL_BUF_SIZE)
-        {
-          write_index = 0U;
-        }
-
-        remaining_length -= segment_length;
       }
 
-      BufferCtl.wr_ptr = write_index;
+      write_index += segment_length;
 
-      if (BufferCtl.fptr >= AUDIO_TOTAL_BUF_SIZE - frame_length)
+      if (write_index == AUDIO_TOTAL_BUF_SIZE)
       {
-        BufferCtl.fptr = AUDIO_TOTAL_BUF_SIZE;
-      }
-      else
-      {
-        BufferCtl.fptr += frame_length;
+        write_index = 0U;
       }
 
-      if ((BufferCtl.rd_enable == 0U) &&
-          (BufferCtl.fptr >= (AUDIO_TOTAL_BUF_SIZE / 2U)))
-      {
-        /* Match the original behaviour: start playback only after at least
-           half the ring is primed to keep the DMA ahead of the host writes. */
-        BufferCtl.rd_enable = 1U;
-      }
+      remaining_chunk -= segment_length;
+    }
 
-      if ((BufferCtl.state == PLAY_BUFFER_OFFSET_UNKNOWN) && (BufferCtl.rd_enable != 0U))
-      {
-        BufferCtl.state = PLAY_BUFFER_OFFSET_NONE;
+    BufferCtl.wr_ptr = write_index;
 
-        if (tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)
-        {
-          Error_Handler();
-        }
+    queued_bytes = USBD_AUDIO_BufferCommit(frame_length);
+
+    if (queued_bytes > AUDIO_TOTAL_BUF_SIZE)
+    {
+      queued_bytes = AUDIO_TOTAL_BUF_SIZE;
+    }
+
+    if ((BufferCtl.rd_enable == 0U) &&
+        (queued_bytes >= (AUDIO_TOTAL_BUF_SIZE / 2U)))
+    {
+      BufferCtl.rd_enable = 1U;
+    }
+
+    if ((BufferCtl.state == PLAY_BUFFER_OFFSET_UNKNOWN) && (BufferCtl.rd_enable != 0U))
+    {
+      /* Start BSP play */
+      BufferCtl.state = PLAY_BUFFER_OFFSET_NONE;
+
+      /* Put a message queue  */
+      if(tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)
+      {
+        Error_Handler();
       }
     }
+
   }
 
+  /* Re-free the first audio input frame for transfer.  */
   ux_device_class_audio_read_frame_free(audio_play_stream);
 
   /* USER CODE END USBD_AUDIO_PlaybackStreamFrameDone */
@@ -420,8 +649,16 @@ VOID usbx_audio_play_app_thread(ULONG arg)
 
   UX_PARAMETER_NOT_USED(arg);
 
+  USBD_AUDIO_SpaceSemaphoreEnsureReady();
+
+  if (USBD_AUDIO_SpaceSemaphoreReady == UX_FALSE)
+  {
+    Error_Handler();
+  }
+
   while (1)
   {
+    /* Wait for a hid device to be connected */
     if (tx_queue_receive(&ux_app_MsgQueue, &BufferCtl.state, TX_WAIT_FOREVER)!= TX_SUCCESS)
     {
       Error_Handler();
@@ -432,6 +669,7 @@ VOID usbx_audio_play_app_thread(ULONG arg)
 
       case PLAY_BUFFER_OFFSET_NONE:
 
+        /*DMA stream from output double buffer to codec in Circular mode launch*/
         USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
         BSP_AUDIO_OUT_Play(0, (uint8_t*)&BufferCtl.buff[0], AUDIO_TOTAL_BUF_SIZE);
 
