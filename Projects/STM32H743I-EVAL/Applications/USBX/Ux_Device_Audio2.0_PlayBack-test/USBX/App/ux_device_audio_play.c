@@ -310,8 +310,8 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
   ULONG start_index;
   ULONG consumed_bytes;
   ULONG underrun_bytes = 0U;
-  ULONG zero_start = 0U;
-  ULONG zero_length = 0U;
+  ULONG zero_consumed_start = 0U;
+  ULONG zero_consumed_length = 0U;
 
   if (bytes == 0U)
   {
@@ -326,6 +326,7 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
   primask = USBD_AUDIO_InterruptDisable();
 
   start_index = BufferCtl.rd_ptr;
+  zero_consumed_start = start_index;
   consumed_bytes = bytes;
   if (BufferCtl.fptr >= consumed_bytes)
   {
@@ -338,7 +339,7 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
     underrun_bytes = bytes - consumed_bytes;
   }
 
-  BufferCtl.rd_ptr += consumed_bytes;
+  BufferCtl.rd_ptr = start_index + bytes;
   if (BufferCtl.rd_ptr >= AUDIO_TOTAL_BUF_SIZE)
   {
     BufferCtl.rd_ptr -= AUDIO_TOTAL_BUF_SIZE;
@@ -347,15 +348,15 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
   if (BufferCtl.fptr == 0U)
   {
     BufferCtl.rd_enable = 0U;
-    zero_start = start_index;
-    zero_length = consumed_bytes;
   }
+
+  zero_consumed_length = consumed_bytes;
 
   USBD_AUDIO_InterruptRestore(primask);
 
-  if (zero_length != 0U)
+  if (zero_consumed_length != 0U)
   {
-    USBD_AUDIO_BufferZero(zero_start, zero_length);
+    USBD_AUDIO_BufferZero(zero_consumed_start, zero_consumed_length);
   }
 
   if (underrun_bytes != 0U)
@@ -498,6 +499,11 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   USBD_AUDIO_DebugLogReset();
   USBD_AUDIO_BufferReset();
   USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_STREAM_OPEN, alternate_setting, 0U);
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
 
 #if defined(UX_DEVICE_STANDALONE)
   /* Make sure the standalone read task restarts immediately. */
