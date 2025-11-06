@@ -72,6 +72,15 @@ __ALIGN_BEGIN AUDIO_OUT_BufferTypeDef  BufferCtl __ALIGN_END;
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+static HAL_StatusTypeDef USBD_AUDIO_SAIClockConfigure(uint32_t sample_rate,
+                                                     uint64_t periph_clock,
+                                                     uint32_t clock_source);
+static uint32_t USBD_AUDIO_SAIClockFraction(uint32_t sample_rate,
+                                            uint32_t multiplier,
+                                            uint32_t pll2m,
+                                            uint32_t pll2p,
+                                            uint32_t pll2n);
+
 static VOID USBD_AUDIO_FeedbackReset(VOID);
 static VOID USBD_AUDIO_FeedbackStart(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_stream,
                                      ULONG sample_rate);
@@ -81,14 +90,24 @@ static VOID USBD_AUDIO_FeedbackEncode(ULONG feedback_value,
                                       UINT high_speed,
                                       UCHAR encoded_feedback[4]);
 
-static HAL_StatusTypeDef USBD_AUDIO_SAIClockConfigure(uint32_t sample_rate,
-                                                     uint64_t periph_clock,
-                                                     uint32_t clock_source);
-static uint32_t USBD_AUDIO_SAIClockFraction(uint32_t sample_rate,
-                                            uint32_t multiplier,
-                                            uint32_t pll2m,
-                                            uint32_t pll2p,
-                                            uint32_t pll2n);
+static TX_SEMAPHORE USBD_AUDIO_SpaceSemaphore;
+static UINT USBD_AUDIO_SpaceSemaphoreReady;
+#if !defined(UX_DEVICE_STANDALONE)
+static UINT USBD_AUDIO_StopPending;
+static TX_SEMAPHORE USBD_AUDIO_StopSemaphore;
+static UINT USBD_AUDIO_StopSemaphoreReady;
+#endif
+
+static ULONG USBD_AUDIO_FeedbackNominal;
+static ULONG USBD_AUDIO_FeedbackMin;
+static ULONG USBD_AUDIO_FeedbackMax;
+static LONG  USBD_AUDIO_FeedbackIntegral;
+static LONG  USBD_AUDIO_FeedbackIntegralLimit;
+static LONG  USBD_AUDIO_FeedbackPGain;
+static LONG  USBD_AUDIO_FeedbackIGain;
+static ULONG USBD_AUDIO_FeedbackShift;
+static ULONG USBD_AUDIO_FeedbackBytesPerSample;
+static UINT  USBD_AUDIO_FeedbackPrimed;
 
 HAL_StatusTypeDef MX_SAI1_ClockConfig(SAI_HandleTypeDef *hsai,
                                       uint32_t SampleRate)
@@ -249,7 +268,6 @@ static VOID USBD_AUDIO_FeedbackReset(VOID)
 static VOID USBD_AUDIO_FeedbackStart(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_stream,
                                      ULONG sample_rate)
 {
-  UX_SLAVE_DEVICE *device;
   UINT high_speed;
   ULONG frame_rate;
   ULONG shift;
@@ -271,8 +289,14 @@ static VOID USBD_AUDIO_FeedbackStart(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     return;
   }
 
-  device = &_ux_system_slave -> ux_system_slave_device;
-  high_speed = (device->ux_slave_device_speed == UX_HIGH_SPEED_DEVICE) ? UX_TRUE : UX_FALSE;
+  if (_ux_system_slave == UX_NULL)
+  {
+    USBD_AUDIO_FeedbackReset();
+
+    return;
+  }
+
+  high_speed = (_ux_system_slave->ux_system_slave_speed == UX_HIGH_SPEED_DEVICE) ? UX_TRUE : UX_FALSE;
   frame_rate = (high_speed != UX_FALSE) ? 8000U : 1000U;
   shift = (high_speed != UX_FALSE) ? 16U : 14U;
 
@@ -423,25 +447,6 @@ static inline VOID USBD_AUDIO_InterruptRestore(uint32_t primask)
 {
   __set_PRIMASK(primask);
 }
-
-static TX_SEMAPHORE USBD_AUDIO_SpaceSemaphore;
-static UINT USBD_AUDIO_SpaceSemaphoreReady;
-#if !defined(UX_DEVICE_STANDALONE)
-static UINT USBD_AUDIO_StopPending;
-static TX_SEMAPHORE USBD_AUDIO_StopSemaphore;
-static UINT USBD_AUDIO_StopSemaphoreReady;
-#endif
-
-static ULONG USBD_AUDIO_FeedbackNominal;
-static ULONG USBD_AUDIO_FeedbackMin;
-static ULONG USBD_AUDIO_FeedbackMax;
-static LONG  USBD_AUDIO_FeedbackIntegral;
-static LONG  USBD_AUDIO_FeedbackIntegralLimit;
-static LONG  USBD_AUDIO_FeedbackPGain;
-static LONG  USBD_AUDIO_FeedbackIGain;
-static ULONG USBD_AUDIO_FeedbackShift;
-static ULONG USBD_AUDIO_FeedbackBytesPerSample;
-static UINT  USBD_AUDIO_FeedbackPrimed;
 
 static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
 {
