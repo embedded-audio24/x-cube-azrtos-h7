@@ -117,6 +117,9 @@ static inline VOID USBD_AUDIO_InterruptRestore(uint32_t primask)
 
 static TX_SEMAPHORE USBD_AUDIO_SpaceSemaphore;
 static UINT USBD_AUDIO_SpaceSemaphoreReady;
+#if !defined(UX_DEVICE_STANDALONE)
+static UINT USBD_AUDIO_StopPending;
+#endif
 
 static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
 {
@@ -132,19 +135,6 @@ static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
 
   return ticks;
 }
-
-static UINT USBD_AUDIO_PlaybackIsActive(VOID)
-{
-  UINT active;
-  uint32_t primask;
-
-  primask = USBD_AUDIO_InterruptDisable();
-  active = BufferCtl.rd_enable;
-  USBD_AUDIO_InterruptRestore(primask);
-
-  return active;
-}
-
 
 static VOID USBD_AUDIO_SpaceSemaphoreEnsureReady(VOID)
 {
@@ -373,6 +363,10 @@ static VOID USBD_AUDIO_BufferReset(VOID)
   ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
   USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
 
+#if !defined(UX_DEVICE_STANDALONE)
+  USBD_AUDIO_StopPending = UX_FALSE;
+#endif
+
   if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
   {
     while (tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_NO_WAIT) == TX_SUCCESS)
@@ -389,11 +383,13 @@ static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
   ULONG used_bytes;
   ULONG elapsed_ms;
 
-  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  if (timeout_ms == 0U)
   {
     return;
   }
 
+  /* Poll the buffered byte count directly—the playback flag may already be
+     lowered even while the DMA drains the final samples. */
   used_bytes = USBD_AUDIO_BufferReserve(0U);
   for (elapsed_ms = 0U; (used_bytes != 0U) && (elapsed_ms < timeout_ms); elapsed_ms++)
   {
@@ -406,11 +402,13 @@ static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
   ULONG timeout_ticks;
   ULONG sleep_ticks;
 
-  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  if (timeout_ms == 0U)
   {
     return;
   }
 
+  /* Poll the buffered byte count directly—the playback flag may already be
+     lowered even while the DMA drains the final samples. */
   used_bytes = USBD_AUDIO_BufferReserve(0U);
   if (used_bytes == 0U)
   {
@@ -471,18 +469,38 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
       _ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
     }
 
+    BSP_AUDIO_OUT_Mute(0);
+
+#if defined(UX_DEVICE_STANDALONE)
     USBD_AUDIO_WaitForPlaybackDrain(1000U);
 
     BSP_AUDIO_OUT_Stop(0);
 
     /* Reset buffer state so stale samples are not replayed on next start. */
     USBD_AUDIO_BufferReset();
+#else
+    /* Let the playback thread finish draining without blocking the USB control path. */
+    USBD_AUDIO_StopPending = UX_TRUE;
+
+    BufferCtl.state = PLAY_BUFFER_OFFSET_STOP;
+    if (tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)
+    {
+      Error_Handler();
+    }
+#endif
 
     return;
   }
 
   /* Reset local audio buffer state before starting a new playback stream. */
+#if !defined(UX_DEVICE_STANDALONE)
+  if (USBD_AUDIO_StopPending == UX_FALSE)
+  {
+    USBD_AUDIO_BufferReset();
+  }
+#else
   USBD_AUDIO_BufferReset();
+#endif
 
 #if defined(UX_DEVICE_STANDALONE)
   /* Make sure the standalone read task restarts immediately. */
@@ -518,6 +536,15 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
   
   /* Get access to first audio input frame.  */
   ux_device_class_audio_read_frame_get(audio_play_stream, &frame_buffer, &frame_length);
+
+#if !defined(UX_DEVICE_STANDALONE)
+  if (USBD_AUDIO_StopPending != UX_FALSE)
+  {
+    ux_device_class_audio_read_frame_free(audio_play_stream);
+
+    return;
+  }
+#endif
 
   if (frame_length != 0U)
   {
@@ -578,7 +605,12 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
       BufferCtl.rd_enable = 1U;
     }
 
-    if ((BufferCtl.state == PLAY_BUFFER_OFFSET_UNKNOWN) && (BufferCtl.rd_enable != 0U))
+    if ((BufferCtl.state == PLAY_BUFFER_OFFSET_UNKNOWN) &&
+        (BufferCtl.rd_enable != 0U)
+#if !defined(UX_DEVICE_STANDALONE)
+        && (USBD_AUDIO_StopPending == UX_FALSE)
+#endif
+        )
     {
       /* Start BSP play */
       BufferCtl.state = PLAY_BUFFER_OFFSET_NONE;
@@ -667,11 +699,20 @@ VOID usbx_audio_play_app_thread(ULONG arg)
     switch(BufferCtl.state)
     {
 
+      case PLAY_BUFFER_OFFSET_STOP:
+
+        USBD_AUDIO_WaitForPlaybackDrain(1000U);
+        BSP_AUDIO_OUT_Stop(0);
+        USBD_AUDIO_BufferReset();
+
+        break;
+
       case PLAY_BUFFER_OFFSET_NONE:
 
         /*DMA stream from output double buffer to codec in Circular mode launch*/
         USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
         BSP_AUDIO_OUT_Play(0, (uint8_t*)&BufferCtl.buff[0], AUDIO_TOTAL_BUF_SIZE);
+        BSP_AUDIO_OUT_UnMute(0);
 
         break;
 
