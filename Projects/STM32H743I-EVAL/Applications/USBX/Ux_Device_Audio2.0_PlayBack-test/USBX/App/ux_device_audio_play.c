@@ -133,19 +133,6 @@ static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
   return ticks;
 }
 
-static UINT USBD_AUDIO_PlaybackIsActive(VOID)
-{
-  UINT active;
-  uint32_t primask;
-
-  primask = USBD_AUDIO_InterruptDisable();
-  active = BufferCtl.rd_enable;
-  USBD_AUDIO_InterruptRestore(primask);
-
-  return active;
-}
-
-
 static VOID USBD_AUDIO_SpaceSemaphoreEnsureReady(VOID)
 {
   if (USBD_AUDIO_SpaceSemaphoreReady == UX_FALSE)
@@ -389,11 +376,13 @@ static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
   ULONG used_bytes;
   ULONG elapsed_ms;
 
-  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  if (timeout_ms == 0U)
   {
     return;
   }
 
+  /* Poll the buffered byte count directly—the playback flag may already be
+     lowered even while the DMA drains the final samples. */
   used_bytes = USBD_AUDIO_BufferReserve(0U);
   for (elapsed_ms = 0U; (used_bytes != 0U) && (elapsed_ms < timeout_ms); elapsed_ms++)
   {
@@ -406,11 +395,13 @@ static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
   ULONG timeout_ticks;
   ULONG sleep_ticks;
 
-  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  if (timeout_ms == 0U)
   {
     return;
   }
 
+  /* Poll the buffered byte count directly—the playback flag may already be
+     lowered even while the DMA drains the final samples. */
   used_bytes = USBD_AUDIO_BufferReserve(0U);
   if (used_bytes == 0U)
   {
