@@ -50,20 +50,6 @@
 /* USER CODE BEGIN PV */
 extern TX_QUEUE ux_app_MsgQueue;
 
-/* Debug logging support was removed, but provide no-op compatibility stubs so
- * any lingering build references resolve without pulling the instrumentation
- * back in. */
-VOID USBD_AUDIO_DebugLogReset(VOID)
-{
-}
-
-VOID USBD_AUDIO_DebugLogWrite(ULONG event, ULONG value0, ULONG value1)
-{
-  UX_PARAMETER_NOT_USED(event);
-  UX_PARAMETER_NOT_USED(value0);
-  UX_PARAMETER_NOT_USED(value1);
-}
-
 /* Set BufferCtl start address to "0x24040000" */
 #if defined ( __ICCARM__ ) /* IAR Compiler */
 #pragma location = 0x24040000
