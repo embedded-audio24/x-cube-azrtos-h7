@@ -462,6 +462,8 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
       _ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
     }
 
+    BSP_AUDIO_OUT_Mute(0);
+
     USBD_AUDIO_WaitForPlaybackDrain(1000U);
 
     BSP_AUDIO_OUT_Stop(0);
@@ -663,6 +665,7 @@ VOID usbx_audio_play_app_thread(ULONG arg)
         /*DMA stream from output double buffer to codec in Circular mode launch*/
         USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
         BSP_AUDIO_OUT_Play(0, (uint8_t*)&BufferCtl.buff[0], AUDIO_TOTAL_BUF_SIZE);
+        BSP_AUDIO_OUT_UnMute(0);
 
         break;
 
