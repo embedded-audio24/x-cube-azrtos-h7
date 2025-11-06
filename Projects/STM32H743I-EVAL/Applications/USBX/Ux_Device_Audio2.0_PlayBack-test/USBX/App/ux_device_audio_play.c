@@ -204,6 +204,38 @@ static VOID USBD_AUDIO_StopSemaphoreWait(ULONG timeout_ms)
 }
 #endif
 
+#if !defined(UX_DEVICE_STANDALONE)
+static VOID USBD_AUDIO_StopSemaphoreEnsureReady(VOID)
+{
+  if (USBD_AUDIO_StopSemaphoreReady == UX_FALSE)
+  {
+    if (tx_semaphore_create(&USBD_AUDIO_StopSemaphore, "audio_stop", 0U) == TX_SUCCESS)
+    {
+      USBD_AUDIO_StopSemaphoreReady = UX_TRUE;
+    }
+  }
+}
+
+static VOID USBD_AUDIO_StopSemaphoreDrain(VOID)
+{
+  if (USBD_AUDIO_StopSemaphoreReady != UX_FALSE)
+  {
+    while (tx_semaphore_get(&USBD_AUDIO_StopSemaphore, TX_NO_WAIT) == TX_SUCCESS)
+    {
+      /* Drain stale stop completions before waiting on a new one. */
+    }
+  }
+}
+
+static VOID USBD_AUDIO_StopSemaphoreSignal(VOID)
+{
+  if (USBD_AUDIO_StopSemaphoreReady != UX_FALSE)
+  {
+    tx_semaphore_ceiling_put(&USBD_AUDIO_StopSemaphore, 1U);
+  }
+}
+#endif
+
 static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 {
   ULONG used_bytes;
