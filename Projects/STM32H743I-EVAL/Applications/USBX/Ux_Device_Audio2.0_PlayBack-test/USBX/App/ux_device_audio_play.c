@@ -314,6 +314,23 @@ static VOID USBD_AUDIO_BufferZero(ULONG start_index, ULONG length)
   }
 }
 
+static VOID USBD_AUDIO_BufferSilencePending(VOID)
+{
+  ULONG read_index;
+  ULONG pending_bytes;
+  uint32_t primask;
+
+  primask = USBD_AUDIO_InterruptDisable();
+  read_index = BufferCtl.rd_ptr;
+  pending_bytes = BufferCtl.fptr;
+  USBD_AUDIO_InterruptRestore(primask);
+
+  if (pending_bytes != 0U)
+  {
+    USBD_AUDIO_BufferZero(read_index, pending_bytes);
+  }
+}
+
 static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 {
   uint32_t primask;
@@ -750,7 +767,17 @@ VOID usbx_audio_play_app_thread(ULONG arg)
 
       case PLAY_BUFFER_OFFSET_STOP:
 
-        USBD_AUDIO_WaitForPlaybackDrain(1000U);
+      {
+        ULONG pending_bytes;
+        UINT should_stop = UX_TRUE;
+
+        pending_bytes = USBD_AUDIO_BufferReserve(0U);
+
+        if (pending_bytes != 0U)
+        {
+          USBD_AUDIO_BufferSilencePending();
+          USBD_AUDIO_WaitForPlaybackDrain(1000U);
+        }
 #if !defined(UX_DEVICE_STANDALONE)
         {
           ULONG settle_ticks;
@@ -765,7 +792,19 @@ VOID usbx_audio_play_app_thread(ULONG arg)
           tx_thread_sleep(settle_ticks);
         }
 #endif
-        BSP_AUDIO_OUT_Stop(0);
+        {
+          uint32_t audio_state = AUDIO_OUT_STATE_STOP;
+
+          if (BSP_AUDIO_OUT_GetState(0, &audio_state) == BSP_ERROR_NONE)
+          {
+            should_stop = (audio_state == AUDIO_OUT_STATE_PLAYING) ? UX_TRUE : UX_FALSE;
+          }
+
+          if (should_stop == UX_TRUE)
+          {
+            (void)BSP_AUDIO_OUT_Stop(0);
+          }
+        }
         BSP_AUDIO_OUT_Mute(0);
         USBD_AUDIO_BufferReset();
 #if !defined(UX_DEVICE_STANDALONE)
@@ -773,6 +812,7 @@ VOID usbx_audio_play_app_thread(ULONG arg)
 #endif
 
         break;
+      }
 
       case PLAY_BUFFER_OFFSET_NONE:
 
