@@ -139,6 +139,7 @@ typedef struct {
 
 VOID USBD_AUDIO_DebugLogReset(VOID);
 VOID USBD_AUDIO_DebugLogSnapshot(USBD_AUDIO_DebugEntry *entries, ULONG max_entries, ULONG *out_count);
+const USBD_AUDIO_DebugEntry *USBD_AUDIO_DebugLogSnapshotGet(ULONG *out_count);
 
 /* USER CODE END 2 */
 

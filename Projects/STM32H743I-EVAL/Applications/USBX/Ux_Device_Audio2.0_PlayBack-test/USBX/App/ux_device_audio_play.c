@@ -118,8 +118,36 @@ static inline VOID USBD_AUDIO_InterruptRestore(uint32_t primask)
 static TX_SEMAPHORE USBD_AUDIO_SpaceSemaphore;
 static UINT USBD_AUDIO_SpaceSemaphoreReady;
 
+static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
+{
+  ULONG ticks;
+
+  ticks = (milliseconds * (ULONG)TX_TIMER_TICKS_PER_SECOND) + 999U;
+  ticks /= 1000U;
+
+  if ((ticks == 0U) && (milliseconds != 0U))
+  {
+    ticks = 1U;
+  }
+
+  return ticks;
+}
+
+static UINT USBD_AUDIO_PlaybackIsActive(VOID)
+{
+  UINT active;
+  uint32_t primask;
+
+  primask = USBD_AUDIO_InterruptDisable();
+  active = BufferCtl.rd_enable;
+  USBD_AUDIO_InterruptRestore(primask);
+
+  return active;
+}
+
 #if (USBD_AUDIO_DEBUG_ENABLED != 0)
 static USBD_AUDIO_DebugEntry USBD_AUDIO_DebugLog[USBD_AUDIO_DEBUG_LOG_SIZE];
+static USBD_AUDIO_DebugEntry USBD_AUDIO_DebugSnapshotBuffer[USBD_AUDIO_DEBUG_LOG_SIZE];
 static ULONG USBD_AUDIO_DebugWriteIndex;
 static ULONG USBD_AUDIO_DebugCount;
 
@@ -229,6 +257,22 @@ VOID USBD_AUDIO_DebugLogSnapshot(USBD_AUDIO_DebugEntry *entries, ULONG max_entri
 
   *out_count = copy_count;
 }
+
+const USBD_AUDIO_DebugEntry *USBD_AUDIO_DebugLogSnapshotGet(ULONG *out_count)
+{
+  ULONG snapshot_count = 0U;
+
+  USBD_AUDIO_DebugLogSnapshot(USBD_AUDIO_DebugSnapshotBuffer,
+                              USBD_AUDIO_DEBUG_LOG_SIZE,
+                              &snapshot_count);
+
+  if (out_count != UX_NULL)
+  {
+    *out_count = snapshot_count;
+  }
+
+  return USBD_AUDIO_DebugSnapshotBuffer;
+}
 #else
 static VOID USBD_AUDIO_DebugLogWrite(ULONG event, ULONG value0, ULONG value1)
 {
@@ -250,6 +294,16 @@ VOID USBD_AUDIO_DebugLogSnapshot(USBD_AUDIO_DebugEntry *entries, ULONG max_entri
   {
     *out_count = 0U;
   }
+}
+
+const USBD_AUDIO_DebugEntry *USBD_AUDIO_DebugLogSnapshotGet(ULONG *out_count)
+{
+  if (out_count != UX_NULL)
+  {
+    *out_count = 0U;
+  }
+
+  return UX_NULL;
 }
 #endif
 
@@ -444,6 +498,66 @@ static VOID USBD_AUDIO_BufferReset(VOID)
     USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_SEMAPHORE_PUT, 0U, 0U);
   }
 }
+
+static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
+{
+#if defined(UX_DEVICE_STANDALONE)
+  ULONG used_bytes;
+  ULONG elapsed_ms;
+
+  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  {
+    return;
+  }
+
+  used_bytes = USBD_AUDIO_BufferReserve(0U);
+  for (elapsed_ms = 0U; (used_bytes != 0U) && (elapsed_ms < timeout_ms); elapsed_ms++)
+  {
+    ux_utility_delay_ms(1U);
+    used_bytes = USBD_AUDIO_BufferReserve(0U);
+  }
+#else
+  ULONG used_bytes;
+  ULONG start_tick;
+  ULONG timeout_ticks;
+  ULONG sleep_ticks;
+
+  if ((timeout_ms == 0U) || (USBD_AUDIO_PlaybackIsActive() == 0U))
+  {
+    return;
+  }
+
+  used_bytes = USBD_AUDIO_BufferReserve(0U);
+  if (used_bytes == 0U)
+  {
+    return;
+  }
+
+  timeout_ticks = USBD_AUDIO_MillisecondsToTicks(timeout_ms);
+  sleep_ticks = USBD_AUDIO_MillisecondsToTicks(1U);
+  if (sleep_ticks == 0U)
+  {
+    sleep_ticks = 1U;
+  }
+
+  start_tick = tx_time_get();
+
+  while (used_bytes != 0U)
+  {
+    ULONG current_tick;
+
+    current_tick = tx_time_get();
+    if ((current_tick - start_tick) >= timeout_ticks)
+    {
+      break;
+    }
+
+    tx_thread_sleep(sleep_ticks);
+
+    used_bytes = USBD_AUDIO_BufferReserve(0U);
+  }
+#endif
+}
 /* USER CODE END 0 */
 
 /**
@@ -478,6 +592,8 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
       _ux_device_stack_transfer_all_request_abort(endpoint, UX_TRANSFER_STATUS_ABORT);
     }
 
+    USBD_AUDIO_WaitForPlaybackDrain(1000U);
+
     BSP_AUDIO_OUT_Stop(0);
 
     /* Reset buffer state so stale samples are not replayed on next start. */
@@ -490,11 +606,6 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   USBD_AUDIO_DebugLogReset();
   USBD_AUDIO_BufferReset();
   USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_STREAM_OPEN, alternate_setting, 0U);
-
-#if defined(UX_DEVICE_STANDALONE)
-  /* Make sure the standalone read task restarts immediately. */
-  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
-#endif
 
 #if defined(UX_DEVICE_STANDALONE)
   /* Make sure the standalone read task restarts immediately. */
