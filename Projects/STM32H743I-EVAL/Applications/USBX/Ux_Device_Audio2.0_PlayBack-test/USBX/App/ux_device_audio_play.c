@@ -115,6 +115,20 @@ static inline VOID USBD_AUDIO_InterruptRestore(uint32_t primask)
   __set_PRIMASK(primask);
 }
 
+static TX_SEMAPHORE USBD_AUDIO_SpaceSemaphore;
+static UINT USBD_AUDIO_SpaceSemaphoreReady;
+
+static VOID USBD_AUDIO_SpaceSemaphoreEnsureReady(VOID)
+{
+  if (USBD_AUDIO_SpaceSemaphoreReady == UX_FALSE)
+  {
+    if (tx_semaphore_create(&USBD_AUDIO_SpaceSemaphore, "audio_space", 0U) == TX_SUCCESS)
+    {
+      USBD_AUDIO_SpaceSemaphoreReady = UX_TRUE;
+    }
+  }
+}
+
 static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 {
   ULONG used_bytes;
@@ -157,6 +171,8 @@ static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 
   return AUDIO_TOTAL_BUF_SIZE + 1U;
 #else
+  USBD_AUDIO_SpaceSemaphoreEnsureReady();
+
   while (1)
   {
     primask = USBD_AUDIO_InterruptDisable();
@@ -179,13 +195,22 @@ static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 
     USBD_AUDIO_InterruptRestore(primask);
 
-    tx_thread_sleep(1);
+    if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
+    {
+      tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_WAIT_FOREVER);
+    }
+    else
+    {
+      tx_thread_relinquish();
+    }
   }
 #endif
 }
 
 static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 {
+  uint32_t primask;
+
   if (bytes == 0U)
   {
     return;
@@ -195,6 +220,8 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
   {
     bytes = AUDIO_TOTAL_BUF_SIZE;
   }
+
+  primask = USBD_AUDIO_InterruptDisable();
 
   if (BufferCtl.fptr >= bytes)
   {
@@ -210,6 +237,13 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
   {
     BufferCtl.rd_ptr -= AUDIO_TOTAL_BUF_SIZE;
   }
+
+  USBD_AUDIO_InterruptRestore(primask);
+
+  if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
+  {
+    tx_semaphore_ceiling_put(&USBD_AUDIO_SpaceSemaphore, 1U);
+  }
 }
 
 static VOID USBD_AUDIO_BufferReset(VOID)
@@ -221,6 +255,16 @@ static VOID USBD_AUDIO_BufferReset(VOID)
   BufferCtl.state = PLAY_BUFFER_OFFSET_UNKNOWN;
   ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
   USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
+
+  if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
+  {
+    while (tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_NO_WAIT) == TX_SUCCESS)
+    {
+      /* Drain the semaphore to avoid stale wakeups after a reset. */
+    }
+
+    tx_semaphore_ceiling_put(&USBD_AUDIO_SpaceSemaphore, 1U);
+  }
 }
 /* USER CODE END 0 */
 
@@ -330,11 +374,6 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
         USBD_AUDIO_CleanCache(&BufferCtl.buff[write_index], segment_length);
       }
 
-      if (segment_length != 0U)
-      {
-        USBD_AUDIO_CleanCache(&BufferCtl.buff[write_index], segment_length);
-      }
-
       write_index += segment_length;
 
       if (write_index == AUDIO_TOTAL_BUF_SIZE)
@@ -428,6 +467,15 @@ ULONG USBD_AUDIO_PlaybackStreamGetMaxFrameBufferSize(VOID)
   */
 VOID usbx_audio_play_app_thread(ULONG arg)
 {
+
+  UX_PARAMETER_NOT_USED(arg);
+
+  USBD_AUDIO_SpaceSemaphoreEnsureReady();
+
+  if (USBD_AUDIO_SpaceSemaphoreReady == UX_FALSE)
+  {
+    Error_Handler();
+  }
 
   while (1)
   {
