@@ -496,6 +496,11 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
 #endif
 
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
+
   /* Start reception (stream opened).  */
   ux_device_class_audio_reception_start(audio_play_stream);
 
