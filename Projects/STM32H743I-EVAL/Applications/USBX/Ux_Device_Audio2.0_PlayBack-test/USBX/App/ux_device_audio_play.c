@@ -145,167 +145,6 @@ static UINT USBD_AUDIO_PlaybackIsActive(VOID)
   return active;
 }
 
-#if (USBD_AUDIO_DEBUG_ENABLED != 0)
-static USBD_AUDIO_DebugEntry USBD_AUDIO_DebugLog[USBD_AUDIO_DEBUG_LOG_SIZE];
-static USBD_AUDIO_DebugEntry USBD_AUDIO_DebugSnapshotBuffer[USBD_AUDIO_DEBUG_LOG_SIZE];
-static ULONG USBD_AUDIO_DebugWriteIndex;
-static ULONG USBD_AUDIO_DebugCount;
-
-static VOID USBD_AUDIO_DebugLogWrite(ULONG event, ULONG value0, ULONG value1)
-{
-  ULONG index;
-  uint32_t primask;
-
-  primask = USBD_AUDIO_InterruptDisable();
-
-  index = USBD_AUDIO_DebugWriteIndex;
-  USBD_AUDIO_DebugLog[index].tick = tx_time_get();
-  USBD_AUDIO_DebugLog[index].event = event;
-  USBD_AUDIO_DebugLog[index].value0 = value0;
-  USBD_AUDIO_DebugLog[index].value1 = value1;
-
-  index++;
-  if (index >= USBD_AUDIO_DEBUG_LOG_SIZE)
-  {
-    index = 0U;
-  }
-
-  USBD_AUDIO_DebugWriteIndex = index;
-
-  if (USBD_AUDIO_DebugCount < USBD_AUDIO_DEBUG_LOG_SIZE)
-  {
-    USBD_AUDIO_DebugCount++;
-  }
-
-  USBD_AUDIO_InterruptRestore(primask);
-}
-
-VOID USBD_AUDIO_DebugLogReset(VOID)
-{
-  uint32_t primask;
-
-  primask = USBD_AUDIO_InterruptDisable();
-
-  USBD_AUDIO_DebugWriteIndex = 0U;
-  USBD_AUDIO_DebugCount = 0U;
-  ux_utility_memory_set((VOID *)USBD_AUDIO_DebugLog, 0, (ULONG)sizeof(USBD_AUDIO_DebugLog));
-
-  USBD_AUDIO_InterruptRestore(primask);
-}
-
-VOID USBD_AUDIO_DebugLogSnapshot(USBD_AUDIO_DebugEntry *entries, ULONG max_entries, ULONG *out_count)
-{
-  ULONG copy_count;
-  ULONG read_index;
-  ULONG index;
-  uint32_t primask;
-
-  if ((entries == UX_NULL) || (out_count == UX_NULL) || (max_entries == 0U))
-  {
-    if (out_count != UX_NULL)
-    {
-      *out_count = 0U;
-    }
-
-    return;
-  }
-
-  primask = USBD_AUDIO_InterruptDisable();
-
-  copy_count = USBD_AUDIO_DebugCount;
-  if (copy_count > max_entries)
-  {
-    copy_count = max_entries;
-  }
-
-  read_index = USBD_AUDIO_DebugWriteIndex;
-
-  if (copy_count < read_index)
-  {
-    read_index -= copy_count;
-  }
-  else
-  {
-    ULONG delta = copy_count - read_index;
-
-    if (delta == 0U)
-    {
-      read_index = 0U;
-    }
-    else
-    {
-      read_index = USBD_AUDIO_DEBUG_LOG_SIZE - delta;
-
-      if (read_index >= USBD_AUDIO_DEBUG_LOG_SIZE)
-      {
-        read_index = 0U;
-      }
-    }
-  }
-
-  for (index = 0U; index < copy_count; index++)
-  {
-    entries[index] = USBD_AUDIO_DebugLog[read_index];
-    read_index++;
-    if (read_index >= USBD_AUDIO_DEBUG_LOG_SIZE)
-    {
-      read_index = 0U;
-    }
-  }
-
-  USBD_AUDIO_InterruptRestore(primask);
-
-  *out_count = copy_count;
-}
-
-const USBD_AUDIO_DebugEntry *USBD_AUDIO_DebugLogSnapshotGet(ULONG *out_count)
-{
-  ULONG snapshot_count = 0U;
-
-  USBD_AUDIO_DebugLogSnapshot(USBD_AUDIO_DebugSnapshotBuffer,
-                              USBD_AUDIO_DEBUG_LOG_SIZE,
-                              &snapshot_count);
-
-  if (out_count != UX_NULL)
-  {
-    *out_count = snapshot_count;
-  }
-
-  return USBD_AUDIO_DebugSnapshotBuffer;
-}
-#else
-static VOID USBD_AUDIO_DebugLogWrite(ULONG event, ULONG value0, ULONG value1)
-{
-  UX_PARAMETER_NOT_USED(event);
-  UX_PARAMETER_NOT_USED(value0);
-  UX_PARAMETER_NOT_USED(value1);
-}
-
-VOID USBD_AUDIO_DebugLogReset(VOID)
-{
-}
-
-VOID USBD_AUDIO_DebugLogSnapshot(USBD_AUDIO_DebugEntry *entries, ULONG max_entries, ULONG *out_count)
-{
-  UX_PARAMETER_NOT_USED(entries);
-  UX_PARAMETER_NOT_USED(max_entries);
-
-  if (out_count != UX_NULL)
-  {
-    *out_count = 0U;
-  }
-}
-
-const USBD_AUDIO_DebugEntry *USBD_AUDIO_DebugLogSnapshotGet(ULONG *out_count)
-{
-  if (out_count != UX_NULL)
-  {
-    *out_count = 0U;
-  }
-
-  return UX_NULL;
-}
-#endif
 
 static VOID USBD_AUDIO_SpaceSemaphoreEnsureReady(VOID)
 {
@@ -349,12 +188,7 @@ static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 
   if ((AUDIO_TOTAL_BUF_SIZE - used_bytes) >= length)
   {
-    ULONG used_before;
-
-    used_before = used_bytes;
     USBD_AUDIO_InterruptRestore(primask);
-
-    USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_RESERVE_GRANTED, used_before, length);
 
     return length;
   }
@@ -378,19 +212,12 @@ static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 
     if ((AUDIO_TOTAL_BUF_SIZE - used_bytes) >= length)
     {
-      ULONG used_before;
-
-      used_before = used_bytes;
       USBD_AUDIO_InterruptRestore(primask);
-
-      USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_RESERVE_GRANTED, used_before, length);
 
       return length;
     }
 
     USBD_AUDIO_InterruptRestore(primask);
-
-    USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_RESERVE_WAIT, used_bytes, length);
     if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
     {
       tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_WAIT_FOREVER);
@@ -428,14 +255,46 @@ static ULONG USBD_AUDIO_BufferCommit(ULONG length)
   BufferCtl.fptr = used_bytes;
   USBD_AUDIO_InterruptRestore(primask);
 
-  USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_FRAME_COMMIT, used_bytes, length);
-
   return used_bytes;
+}
+
+static VOID USBD_AUDIO_BufferZero(ULONG start_index, ULONG length)
+{
+  ULONG remaining = length;
+
+  if ((length == 0U) || (start_index >= AUDIO_TOTAL_BUF_SIZE))
+  {
+    return;
+  }
+
+  while (remaining != 0U)
+  {
+    ULONG segment_length;
+
+    segment_length = AUDIO_TOTAL_BUF_SIZE - start_index;
+    if (segment_length > remaining)
+    {
+      segment_length = remaining;
+    }
+
+    ux_utility_memory_set(&BufferCtl.buff[start_index], 0, segment_length);
+    USBD_AUDIO_CleanCache(&BufferCtl.buff[start_index], segment_length);
+
+    start_index += segment_length;
+    if (start_index >= AUDIO_TOTAL_BUF_SIZE)
+    {
+      start_index = 0U;
+    }
+
+    remaining -= segment_length;
+  }
 }
 
 static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 {
   uint32_t primask;
+  ULONG start_index;
+  ULONG consumed_bytes;
 
   if (bytes == 0U)
   {
@@ -449,16 +308,19 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 
   primask = USBD_AUDIO_InterruptDisable();
 
-  if (BufferCtl.fptr >= bytes)
+  consumed_bytes = bytes;
+  if (BufferCtl.fptr >= consumed_bytes)
   {
-    BufferCtl.fptr -= bytes;
+    BufferCtl.fptr -= consumed_bytes;
   }
   else
   {
+    consumed_bytes = BufferCtl.fptr;
     BufferCtl.fptr = 0U;
   }
 
-  BufferCtl.rd_ptr += bytes;
+  start_index = BufferCtl.rd_ptr;
+  BufferCtl.rd_ptr += consumed_bytes;
   if (BufferCtl.rd_ptr >= AUDIO_TOTAL_BUF_SIZE)
   {
     BufferCtl.rd_ptr -= AUDIO_TOTAL_BUF_SIZE;
@@ -466,12 +328,14 @@ static VOID USBD_AUDIO_PlaybackAdvance(ULONG bytes)
 
   USBD_AUDIO_InterruptRestore(primask);
 
-  USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_PLAYBACK_ADVANCE, BufferCtl.fptr, bytes);
+  if (consumed_bytes != 0U)
+  {
+    USBD_AUDIO_BufferZero(start_index, consumed_bytes);
+  }
 
   if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
   {
     tx_semaphore_ceiling_put(&USBD_AUDIO_SpaceSemaphore, 1U);
-    USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_SEMAPHORE_PUT, BufferCtl.fptr, 0U);
   }
 }
 
@@ -485,17 +349,13 @@ static VOID USBD_AUDIO_BufferReset(VOID)
   ux_utility_memory_set(BufferCtl.buff, 0, AUDIO_TOTAL_BUF_SIZE);
   USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
 
-  USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_BUFFER_RESET, 0U, 0U);
-
   if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
   {
     while (tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_NO_WAIT) == TX_SUCCESS)
     {
       /* Drain the semaphore to avoid stale wakeups after a reset. */
     }
-
     tx_semaphore_ceiling_put(&USBD_AUDIO_SpaceSemaphore, 1U);
-    USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_SEMAPHORE_PUT, 0U, 0U);
   }
 }
 
@@ -576,11 +436,6 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   if (alternate_setting == 0U)
   {
     UX_SLAVE_ENDPOINT *endpoint = audio_play_stream->ux_device_class_audio_stream_endpoint;
-    ULONG queued_bytes;
-
-    queued_bytes = USBD_AUDIO_BufferReserve(0U);
-    USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_STREAM_CLOSE, queued_bytes, alternate_setting);
-
     /* Stop host reception and local playback when the stream closes. */
 #if defined(UX_DEVICE_STANDALONE)
     /* Mark the standalone read task as stopped so it flushes pending frames. */
@@ -606,6 +461,11 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   USBD_AUDIO_DebugLogReset();
   USBD_AUDIO_BufferReset();
   USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_STREAM_OPEN, alternate_setting, 0U);
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
 
 #if defined(UX_DEVICE_STANDALONE)
   /* Make sure the standalone read task restarts immediately. */
@@ -648,10 +508,6 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
     UCHAR *current_frame_ptr = frame_buffer;
     ULONG write_index = BufferCtl.wr_ptr;
     ULONG queued_bytes;
-    ULONG used_before_copy;
-
-    used_before_copy = USBD_AUDIO_BufferReserve(0U);
-    USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_FRAME_RECEIVED, used_before_copy, frame_length);
 
     reserve_result = USBD_AUDIO_BufferReserve(frame_length);
 
@@ -659,7 +515,6 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
     if (reserve_result > AUDIO_TOTAL_BUF_SIZE)
     {
       /* Not enough room and cannot wait in standalone mode, drop the frame. */
-      USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_FRAME_DROPPED, used_before_copy, frame_length);
       ux_device_class_audio_read_frame_free(audio_play_stream);
 
       return;
