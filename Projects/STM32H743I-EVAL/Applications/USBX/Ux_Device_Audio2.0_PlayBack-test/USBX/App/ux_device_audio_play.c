@@ -496,7 +496,29 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   }
 
   /* Reset local audio buffer state before starting a new playback stream. */
+  USBD_AUDIO_DebugLogReset();
   USBD_AUDIO_BufferReset();
+  USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_STREAM_OPEN, alternate_setting, 0U);
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
+
+#if defined(UX_DEVICE_STANDALONE)
+  /* Make sure the standalone read task restarts immediately. */
+  audio_play_stream->ux_device_class_audio_stream_task_state = UX_DEVICE_CLASS_AUDIO_STREAM_RW_START;
+#endif
 
 #if defined(UX_DEVICE_STANDALONE)
   /* Make sure the standalone read task restarts immediately. */
@@ -590,6 +612,7 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
         (queued_bytes >= (AUDIO_TOTAL_BUF_SIZE / 2U)))
     {
       BufferCtl.rd_enable = 1U;
+      USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_PLAYBACK_START, queued_bytes, 1U);
     }
 
     if ((BufferCtl.state == PLAY_BUFFER_OFFSET_UNKNOWN) && (BufferCtl.rd_enable != 0U))
@@ -601,6 +624,10 @@ VOID USBD_AUDIO_PlaybackStreamFrameDone(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play
       if(tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)
       {
         Error_Handler();
+      }
+      else
+      {
+        USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_PLAYBACK_START, queued_bytes, 2U);
       }
     }
 
@@ -686,6 +713,7 @@ VOID usbx_audio_play_app_thread(ULONG arg)
         /*DMA stream from output double buffer to codec in Circular mode launch*/
         USBD_AUDIO_CleanCache(BufferCtl.buff, AUDIO_TOTAL_BUF_SIZE);
         BSP_AUDIO_OUT_Play(0, (uint8_t*)&BufferCtl.buff[0], AUDIO_TOTAL_BUF_SIZE);
+        USBD_AUDIO_DebugLogWrite(USBD_AUDIO_DEBUG_EVENT_PLAYBACK_START, BufferCtl.fptr, 3U);
 
         break;
 
