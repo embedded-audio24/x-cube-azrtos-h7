@@ -139,10 +139,6 @@ static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
 }
 
 #if !defined(UX_DEVICE_STANDALONE)
-static UINT USBD_AUDIO_StopPending;
-static TX_SEMAPHORE USBD_AUDIO_StopSemaphore;
-static UINT USBD_AUDIO_StopSemaphoreReady;
-
 static VOID USBD_AUDIO_StopSemaphorePrepare(VOID)
 {
   if (USBD_AUDIO_StopSemaphoreReady == UX_FALSE)
@@ -188,36 +184,28 @@ static VOID USBD_AUDIO_StopWaitForCompletion(ULONG timeout_ms)
 
 static VOID USBD_AUDIO_SpaceSemaphoreEnsureReady(VOID)
 {
-  if ((USBD_AUDIO_StopSemaphoreReady != UX_FALSE) &&
-      (USBD_AUDIO_StopPending != UX_FALSE))
+#if !defined(UX_DEVICE_STANDALONE)
+  if (USBD_AUDIO_SpaceSemaphoreReady == UX_FALSE)
   {
-    ULONG wait_ticks;
-
-    wait_ticks = USBD_AUDIO_MillisecondsToTicks(timeout_ms);
-    if (wait_ticks == 0U)
+    if (tx_semaphore_create(&USBD_AUDIO_SpaceSemaphore, "audio_space", 0U) == TX_SUCCESS)
     {
-      wait_ticks = 1U;
-    }
-
-    while (USBD_AUDIO_StopPending != UX_FALSE)
-    {
-      if (tx_semaphore_get(&USBD_AUDIO_StopSemaphore, wait_ticks) != TX_SUCCESS)
-      {
-        break;
-      }
+      USBD_AUDIO_SpaceSemaphoreReady = UX_TRUE;
     }
   }
-}
-#endif
 
-static VOID USBD_AUDIO_StopSemaphoreSignal(VOID)
-{
-  if (USBD_AUDIO_StopSemaphoreReady != UX_FALSE)
+  if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
   {
-    tx_semaphore_ceiling_put(&USBD_AUDIO_StopSemaphore, 1U);
+    while (tx_semaphore_get(&USBD_AUDIO_SpaceSemaphore, TX_NO_WAIT) == TX_SUCCESS)
+    {
+      /* Drain stale space completions before waiting on a new one. */
+    }
+
+    tx_semaphore_ceiling_put(&USBD_AUDIO_SpaceSemaphore, 1U);
   }
-}
+#else
+  /* No semaphore needed when running in standalone mode. */
 #endif
+}
 
 static ULONG USBD_AUDIO_BufferReserve(ULONG length)
 {
