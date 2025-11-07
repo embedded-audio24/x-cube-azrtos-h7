@@ -629,6 +629,15 @@ static VOID USBD_AUDIO_StopWaitForCompletion(ULONG timeout_ms)
   {
     USBD_AUDIO_StopWaitBudgetMs = 0U;
   }
+
+  if (USBD_AUDIO_StopPending != UX_FALSE)
+  {
+    USBD_AUDIO_StopForceComplete();
+  }
+  else
+  {
+    USBD_AUDIO_StopWaitBudgetMs = 0U;
+  }
 }
 #endif
 
@@ -915,6 +924,9 @@ static ULONG USBD_AUDIO_StopDrainBudget(ULONG pending_bytes)
 
   if (pending_bytes == 0U)
   {
+#if !defined(UX_DEVICE_STANDALONE)
+    USBD_AUDIO_StopWaitBudgetMs = 0U;
+#endif
     return 0U;
   }
 
@@ -1073,6 +1085,13 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     USBD_AUDIO_StopSemaphorePrepare();
     /* Let the playback thread finish draining without blocking the USB control path. */
     USBD_AUDIO_StopPending = UX_TRUE;
+
+    if (pending_bytes == 0U)
+    {
+      USBD_AUDIO_StopForceComplete();
+
+      return;
+    }
 
     BufferCtl.state = PLAY_BUFFER_OFFSET_STOP;
     if (tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)

@@ -38,6 +38,12 @@ This document captures the issues addressed during the USB Audio Class 2.0 playb
 - **Symptom**: Builds without the stop semaphore or with a failed RTOS primitive allocation still waited the full USB control timeout because the watchdog path never ran.
 - **Fix**: `USBD_AUDIO_StopWaitForCompletion()` now bails out immediately when the stop semaphore is unavailable and calls `USBD_AUDIO_StopForceComplete()` so the buffer, DMA, and state flags reset before the host times out. The helper also short-circuits if the stop has already finished to keep the cached wait budget consistent. See `USBX/App/ux_device_audio_play.c`.
 
-## 10. Remaining work
+## 10. Stop completion short-circuit for empty drains
+- **Symptom**: Pressing Next or replay after a playlist ended still paused around 10 seconds because the stop handler always
+  queued the worker path and waited out the drain budget even when no audio remained in the buffer.
+- **Fix**: Cache a zero wait budget when the queue is already empty and force-complete the stop immediately instead of queuing
+  the playback thread. The control path now returns as soon as the host closes the stream. See `USBX/App/ux_device_audio_play.c`.
+
+## 11. Remaining work
 - Verify the stop-drain cap on actual hardware and adjust `USBD_AUDIO_STOP_DRAIN_MAX_MS` if the codec needs a longer mute window.
 - Collect USB analyzer traces to confirm the asynchronous feedback endpoint converges across every supported sample rate.
