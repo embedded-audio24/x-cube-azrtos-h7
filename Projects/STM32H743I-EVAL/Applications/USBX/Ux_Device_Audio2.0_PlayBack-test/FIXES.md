@@ -22,6 +22,10 @@ This document captures the issues addressed during the USB Audio Class 2.0 playb
 - **Symptom**: Audio pops persisted and the UI hung ~10 seconds before replay after pressing Next or when a playlist ended.
 - **Fix**: Corrected the playback error sign and tightened the PI integral clamp so feedback requests speed up when the buffer under-runs, and capped the stop-drain wait time with `USBD_AUDIO_StopDrainBudget()` so low-rate streams do not block the next start. See `USBX/App/ux_device_audio_play.c`.
 
-## 6. Remaining work
+## 6. Long stop handshakes after playlist changes
+- **Symptom**: Even after bounding the drain itself, the host still paused ~10 seconds before starting the next track because the class request handler always waited a full second for the stop thread to finish.
+- **Fix**: Track the computed drain budget in `USBD_AUDIO_StopDrainBudget()` and reuse it when `USBD_AUDIO_StopWaitForCompletion()` blocks the control path, guaranteeing the wait matches the actual buffer flush time instead of the previous fixed 1-second timeout. See `USBX/App/ux_device_audio_play.c`.
+
+## 7. Remaining work
 - Verify the stop-drain cap on actual hardware and adjust `USBD_AUDIO_STOP_DRAIN_MAX_MS` if the codec needs a longer mute window.
 - Collect USB analyzer traces to confirm the asynchronous feedback endpoint converges across every supported sample rate.
