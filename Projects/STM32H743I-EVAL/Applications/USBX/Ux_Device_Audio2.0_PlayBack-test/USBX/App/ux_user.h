@@ -433,7 +433,7 @@
 
 /* Defined, this macro enables device audio feedback endpoint support.  */
 
-#define UX_DEVICE_CLASS_AUDIO_FEEDBACK_SUPPORT
+/* #define UX_DEVICE_CLASS_AUDIO_FEEDBACK_SUPPORT  */
 
 /* Defined, this macro enables device audio interrupt endpoint support.  */
 
