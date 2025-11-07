@@ -38,7 +38,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define USBD_AUDIO_STOP_DRAIN_MAX_MS   200U
+#define USBD_AUDIO_STOP_DRAIN_MIN_MS   10U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -89,6 +90,7 @@ static VOID USBD_AUDIO_FeedbackUpdate(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_s
 static VOID USBD_AUDIO_FeedbackEncode(ULONG feedback_value,
                                       UINT high_speed,
                                       UCHAR encoded_feedback[4]);
+static ULONG USBD_AUDIO_StopDrainBudget(ULONG pending_bytes);
 
 static TX_SEMAPHORE USBD_AUDIO_SpaceSemaphore;
 static UINT USBD_AUDIO_SpaceSemaphoreReady;
@@ -108,6 +110,7 @@ static LONG  USBD_AUDIO_FeedbackIGain;
 static ULONG USBD_AUDIO_FeedbackShift;
 static ULONG USBD_AUDIO_FeedbackBytesPerSample;
 static UINT  USBD_AUDIO_FeedbackPrimed;
+static ULONG USBD_AUDIO_PlaybackBytesPerSecond;
 
 HAL_StatusTypeDef MX_SAI1_ClockConfig(SAI_HandleTypeDef *hsai,
                                       uint32_t SampleRate)
@@ -263,6 +266,7 @@ static VOID USBD_AUDIO_FeedbackReset(VOID)
   USBD_AUDIO_FeedbackShift = 0U;
   USBD_AUDIO_FeedbackBytesPerSample = 0U;
   USBD_AUDIO_FeedbackPrimed = UX_FALSE;
+  USBD_AUDIO_PlaybackBytesPerSecond = 0U;
 }
 
 static VOID USBD_AUDIO_FeedbackStart(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_stream,
@@ -315,6 +319,18 @@ static VOID USBD_AUDIO_FeedbackStart(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   if (nominal == 0U)
   {
     nominal = 1U;
+  }
+
+  {
+    uint64_t bytes_per_second;
+
+    bytes_per_second = (uint64_t)sample_rate * (uint64_t)bytes_per_sample;
+    if (bytes_per_second > (uint64_t)UINT32_MAX)
+    {
+      bytes_per_second = (uint64_t)UINT32_MAX;
+    }
+
+    USBD_AUDIO_PlaybackBytesPerSecond = (ULONG)bytes_per_second;
   }
 
   USBD_AUDIO_FeedbackShift = shift;
@@ -781,6 +797,47 @@ static VOID USBD_AUDIO_BufferReset(VOID)
   }
 }
 
+static ULONG USBD_AUDIO_StopDrainBudget(ULONG pending_bytes)
+{
+  ULONG bytes_per_second = USBD_AUDIO_PlaybackBytesPerSecond;
+  ULONG budget_ms;
+
+  if (pending_bytes == 0U)
+  {
+    return 0U;
+  }
+
+  if (bytes_per_second == 0U)
+  {
+    budget_ms = USBD_AUDIO_STOP_DRAIN_MAX_MS;
+  }
+  else
+  {
+    uint64_t estimate_ms;
+
+    estimate_ms = ((uint64_t)pending_bytes * 1000ULL) / (uint64_t)bytes_per_second;
+    if (estimate_ms > (uint64_t)UINT32_MAX)
+    {
+      budget_ms = UINT32_MAX;
+    }
+    else
+    {
+      budget_ms = (ULONG)estimate_ms;
+    }
+  }
+
+  if (budget_ms < USBD_AUDIO_STOP_DRAIN_MIN_MS)
+  {
+    budget_ms = USBD_AUDIO_STOP_DRAIN_MIN_MS;
+  }
+  if (budget_ms > USBD_AUDIO_STOP_DRAIN_MAX_MS)
+  {
+    budget_ms = USBD_AUDIO_STOP_DRAIN_MAX_MS;
+  }
+
+  return budget_ms;
+}
+
 static VOID USBD_AUDIO_WaitForPlaybackDrain(ULONG timeout_ms)
 {
 #if defined(UX_DEVICE_STANDALONE)
@@ -862,6 +919,8 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   if (alternate_setting == 0U)
   {
     UX_SLAVE_ENDPOINT *endpoint = audio_play_stream->ux_device_class_audio_stream_endpoint;
+    ULONG pending_bytes;
+    ULONG drain_budget;
 
     USBD_AUDIO_FeedbackPrimed = UX_FALSE;
     /* Stop host reception and local playback when the stream closes. */
@@ -877,8 +936,23 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
 
     BSP_AUDIO_OUT_Mute(0);
 
+    pending_bytes = USBD_AUDIO_BufferReserve(0U);
+    drain_budget = USBD_AUDIO_StopDrainBudget(pending_bytes);
+
+#if !defined(UX_DEVICE_STANDALONE)
+    UX_PARAMETER_NOT_USED(drain_budget);
+#endif
+
+    if (pending_bytes != 0U)
+    {
+      USBD_AUDIO_BufferSilencePending();
+    }
+
 #if defined(UX_DEVICE_STANDALONE)
-    USBD_AUDIO_WaitForPlaybackDrain(1000U);
+    if (drain_budget != 0U)
+    {
+      USBD_AUDIO_WaitForPlaybackDrain(drain_budget);
+    }
 
     BSP_AUDIO_OUT_Stop(0);
 
@@ -1124,13 +1198,22 @@ VOID usbx_audio_play_app_thread(ULONG arg)
       {
         ULONG pending_bytes;
         UINT should_stop = UX_TRUE;
+        ULONG drain_budget;
 
         pending_bytes = USBD_AUDIO_BufferReserve(0U);
+        drain_budget = USBD_AUDIO_StopDrainBudget(pending_bytes);
 
         if (pending_bytes != 0U)
         {
           USBD_AUDIO_BufferSilencePending();
-          USBD_AUDIO_WaitForPlaybackDrain(1000U);
+          if (drain_budget != 0U)
+          {
+            USBD_AUDIO_WaitForPlaybackDrain(drain_budget);
+          }
+        }
+        else if (drain_budget != 0U)
+        {
+          USBD_AUDIO_WaitForPlaybackDrain(drain_budget);
         }
 #if !defined(UX_DEVICE_STANDALONE)
         {
