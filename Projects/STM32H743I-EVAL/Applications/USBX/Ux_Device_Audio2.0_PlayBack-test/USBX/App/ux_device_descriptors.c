@@ -540,23 +540,31 @@ uint8_t  USBD_FrameWork_AddToConfDesc(USBD_DevClassHandleTypeDef *pdev, uint8_t 
       pdev->tclasslist[pdev->classId].Ifs[1] = (uint8_t)(interface + 1U);
 
       /* Assign endpoint numbers */
-      pdev->tclasslist[pdev->classId].NumEps += 1U; /* EP_OUT */
+      pdev->tclasslist[pdev->classId].NumEps += 2U; /* EP_OUT + feedback IN */
 
       /* Check the current speed to assign endpoint OUT */
       if (pdev->Speed == USBD_HIGH_SPEED)
       {
         /* Assign OUT Endpoint */
         USBD_FrameWork_AssignEp(pdev, USBD_AUDIO_PLAY_EPOUT_ADDR,
-                                USBD_EP_TYPE_ISOC|USBD_EP_ATTR_ISOC_NOSYNC,
+                                USBD_EP_TYPE_ISOC|USBD_EP_ATTR_ISOC_ASYNC,
                                 USBD_AUDIO_PLAY_EPOUT_HS_MPS);
+
+        USBD_FrameWork_AssignEp(pdev, USBD_AUDIO_PLAY_EPFB_ADDR,
+                                USBD_EP_TYPE_ISOC|USBD_EP_ATTR_ISOC_ASYNC|USBD_EP_ATTR_ISOC_FEEDBACK,
+                                USBD_AUDIO_PLAY_EPFB_HS_MPS);
 
       }
       else
       {
         /* Assign OUT Endpoint */
         USBD_FrameWork_AssignEp(pdev, USBD_AUDIO_PLAY_EPOUT_ADDR,
-                                USBD_EP_TYPE_ISOC|USBD_EP_ATTR_ISOC_NOSYNC,
+                                USBD_EP_TYPE_ISOC|USBD_EP_ATTR_ISOC_ASYNC,
                                 USBD_AUDIO_PLAY_EPOUT_FS_MPS);
+
+        USBD_FrameWork_AssignEp(pdev, USBD_AUDIO_PLAY_EPFB_ADDR,
+                                USBD_EP_TYPE_ISOC|USBD_EP_ATTR_ISOC_ASYNC|USBD_EP_ATTR_ISOC_FEEDBACK,
+                                USBD_AUDIO_PLAY_EPFB_FS_MPS);
 
       }
 
@@ -809,7 +817,7 @@ static void USBD_FrameWork_AUDIO20_Desc(USBD_DevClassHandleTypeDef *pdev,
   /* Interface 1, Alternate Setting 1 */
   __USBD_FRAMEWORK_SET_IF(pdev->tclasslist[pdev->classId].Ifs[interface_index],
                           0x01U,
-                          0x01U,
+                          0x02U,
                           UX_DEVICE_CLASS_AUDIO_CLASS,
                           UX_DEVICE_CLASS_AUDIO_SUBCLASS_AUDIOSTREAMING,
                           UX_DEVICE_CLASS_AUTIO_PROTOCOL_VERSION_02_00,
@@ -848,6 +856,22 @@ static void USBD_FrameWork_AUDIO20_Desc(USBD_DevClassHandleTypeDef *pdev,
                           (uint16_t)(pdev->tclasslist[pdev->classId].Eps[endpoint_index].size),
                           USBD_AUDIO_PLAY_EPOUT_HS_BINTERVAL,
                           USBD_AUDIO_PLAY_EPOUT_FS_BINTERVAL);
+
+  /* Extend endpoint descriptor with refresh and synch address fields. */
+  pEpDesc->bLength = (uint8_t)(sizeof(USBD_EpDescTypedef) + 2U);
+  ((uint8_t *)(pConf + *Sze))[0] = 0x00U;
+  ((uint8_t *)(pConf + *Sze))[1] = USBD_AUDIO_PLAY_EPFB_ADDR;
+  *Sze += 2U;
+
+  /* Increment endpoint index */
+  endpoint_index++;
+
+  /* Append feedback endpoint descriptor. */
+  __USBD_FRAMEWORK_SET_EP((pdev->tclasslist[pdev->classId].Eps[endpoint_index].add),
+                          (pdev->tclasslist[pdev->classId].Eps[endpoint_index].type),
+                          (uint16_t)(pdev->tclasslist[pdev->classId].Eps[endpoint_index].size),
+                          USBD_AUDIO_PLAY_EPFB_HS_BINTERVAL,
+                          USBD_AUDIO_PLAY_EPFB_FS_BINTERVAL);
 
   /* Increment endpoint index */
   endpoint_index++;
