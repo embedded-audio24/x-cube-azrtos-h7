@@ -1061,6 +1061,13 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     /* Let the playback thread finish draining without blocking the USB control path. */
     USBD_AUDIO_StopPending = UX_TRUE;
 
+    if (pending_bytes == 0U)
+    {
+      USBD_AUDIO_StopForceComplete();
+
+      return;
+    }
+
     BufferCtl.state = PLAY_BUFFER_OFFSET_STOP;
     if (tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)
     {
