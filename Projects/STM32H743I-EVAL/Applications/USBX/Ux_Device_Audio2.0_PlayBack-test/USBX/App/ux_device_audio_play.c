@@ -98,6 +98,7 @@ static UINT USBD_AUDIO_SpaceSemaphoreReady;
 static UINT USBD_AUDIO_StopPending;
 static TX_SEMAPHORE USBD_AUDIO_StopSemaphore;
 static UINT USBD_AUDIO_StopSemaphoreReady;
+static UINT USBD_AUDIO_StopForced;
 #endif
 
 static ULONG USBD_AUDIO_FeedbackNominal;
@@ -510,24 +511,90 @@ static VOID USBD_AUDIO_StopWaitForCompletion(ULONG timeout_ms)
   if ((USBD_AUDIO_StopSemaphoreReady != UX_FALSE) &&
       (USBD_AUDIO_StopPending != UX_FALSE))
   {
-    ULONG wait_ticks;
+    ULONG wait_limit_ticks;
+    ULONG poll_ticks;
+    ULONG start_tick;
 
     if (timeout_ms == 0U)
     {
       timeout_ms = USBD_AUDIO_STOP_DRAIN_MIN_MS;
     }
 
-    wait_ticks = USBD_AUDIO_MillisecondsToTicks(timeout_ms);
-    if (wait_ticks == 0U)
+    wait_limit_ticks = USBD_AUDIO_MillisecondsToTicks(timeout_ms);
+    if (wait_limit_ticks == 0U)
     {
-      wait_ticks = 1U;
+      wait_limit_ticks = 1U;
     }
+
+    poll_ticks = USBD_AUDIO_MillisecondsToTicks(1U);
+    if (poll_ticks == 0U)
+    {
+      poll_ticks = 1U;
+    }
+
+    if (poll_ticks > wait_limit_ticks)
+    {
+      poll_ticks = wait_limit_ticks;
+    }
+  }
+
+    start_tick = tx_time_get();
 
     while (USBD_AUDIO_StopPending != UX_FALSE)
     {
-      if (tx_semaphore_get(&USBD_AUDIO_StopSemaphore, wait_ticks) != TX_SUCCESS)
+      ULONG elapsed_ticks;
+      ULONG remaining_ticks;
+      ULONG wait_slice;
+
+      elapsed_ticks = tx_time_get() - start_tick;
+      if (elapsed_ticks >= wait_limit_ticks)
       {
         break;
+      }
+
+      remaining_ticks = wait_limit_ticks - elapsed_ticks;
+      if (remaining_ticks == 0U)
+      {
+        break;
+      }
+
+      wait_slice = (remaining_ticks > poll_ticks) ? poll_ticks : remaining_ticks;
+      if (wait_slice == 0U)
+      {
+        wait_slice = 1U;
+      }
+
+      if (tx_semaphore_get(&USBD_AUDIO_StopSemaphore, wait_slice) != TX_SUCCESS)
+      {
+        continue;
+      }
+    }
+
+    if (USBD_AUDIO_StopPending != UX_FALSE)
+    {
+      uint32_t audio_state = AUDIO_OUT_STATE_STOP;
+
+      BSP_AUDIO_OUT_Mute(0);
+
+      if (BSP_AUDIO_OUT_GetState(0, &audio_state) == BSP_ERROR_NONE)
+      {
+        if (audio_state == AUDIO_OUT_STATE_PLAYING)
+        {
+          (void)BSP_AUDIO_OUT_Stop(0);
+        }
+      }
+      else
+      {
+        (void)BSP_AUDIO_OUT_Stop(0);
+      }
+
+      USBD_AUDIO_BufferReset();
+
+      USBD_AUDIO_StopForced = UX_TRUE;
+
+      if (USBD_AUDIO_StopSemaphoreReady != UX_FALSE)
+      {
+        tx_semaphore_ceiling_put(&USBD_AUDIO_StopSemaphore, 1U);
       }
     }
   }
@@ -802,6 +869,7 @@ static VOID USBD_AUDIO_BufferReset(VOID)
 #if !defined(UX_DEVICE_STANDALONE)
   USBD_AUDIO_StopPending = UX_FALSE;
   USBD_AUDIO_StopWaitBudgetMs = 0U;
+  USBD_AUDIO_StopForced = UX_FALSE;
 #endif
 
   if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
@@ -1219,6 +1287,14 @@ VOID usbx_audio_play_app_thread(ULONG arg)
 
         pending_bytes = USBD_AUDIO_BufferReserve(0U);
         drain_budget = USBD_AUDIO_StopDrainBudget(pending_bytes);
+
+#if !defined(UX_DEVICE_STANDALONE)
+        if (USBD_AUDIO_StopForced != UX_FALSE)
+        {
+          USBD_AUDIO_StopForced = UX_FALSE;
+          break;
+        }
+#endif
 
         if (pending_bytes != 0U)
         {
