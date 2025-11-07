@@ -55,6 +55,10 @@ This document captures the issues addressed during the USB Audio Class 2.0 playb
 - **Symptom**: After the one-shot wait change the UI pauses stretched to ~30 seconds because the forced-stop helper itself blocked inside `BSP_AUDIO_OUT_Stop()` while the DMA finished flushing.
 - **Fix**: Let `USBD_AUDIO_StopForceComplete()` only mute and reset state, then let the playback thread perform the actual hardware stop with a new `skip_drain` path so it bypasses the long drain/poll loop. The forced flag still posts the stop semaphore immediately so control requests return without waiting for the worker. See `USBX/App/ux_device_audio_play.c`.
 
-## 13. Remaining work
+## 13. Forced stop skipped the playback worker
+- **Symptom**: Pressing Next or replay after a playlist finished sometimes delayed the restart by 15–30 seconds and distorted the following track because the forced-stop helper cleared the buffer without scheduling the playback thread to halt the codec.
+- **Fix**: Track whether the stop worker is queued, always enqueue the stop request even for empty buffers, and have the forced-stop helper only shut down the codec directly when no worker is pending. This keeps the hardware and firmware state machines in sync while still short-circuiting the USB control path. See `USBX/App/ux_device_audio_play.c`.
+
+## 14. Remaining work
 - Verify the stop-drain cap on actual hardware and adjust `USBD_AUDIO_STOP_DRAIN_MAX_MS` if the codec needs a longer mute window.
 - Collect USB analyzer traces to confirm the asynchronous feedback endpoint converges across every supported sample rate.

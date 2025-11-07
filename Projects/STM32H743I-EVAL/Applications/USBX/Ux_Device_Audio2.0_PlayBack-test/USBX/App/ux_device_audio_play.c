@@ -100,6 +100,7 @@ static UINT USBD_AUDIO_StopPending;
 static TX_SEMAPHORE USBD_AUDIO_StopSemaphore;
 static UINT USBD_AUDIO_StopSemaphoreReady;
 static UINT USBD_AUDIO_StopForced;
+static UINT USBD_AUDIO_StopWorkerQueued;
 #endif
 
 static ULONG USBD_AUDIO_FeedbackNominal;
@@ -490,6 +491,8 @@ static ULONG USBD_AUDIO_MillisecondsToTicks(ULONG milliseconds)
 #if !defined(UX_DEVICE_STANDALONE)
 static VOID USBD_AUDIO_StopForceComplete(VOID)
 {
+  UINT worker_expected;
+
   if (USBD_AUDIO_StopPending == UX_FALSE)
   {
     USBD_AUDIO_StopWaitBudgetMs = 0U;
@@ -497,9 +500,32 @@ static VOID USBD_AUDIO_StopForceComplete(VOID)
     return;
   }
 
+  worker_expected = USBD_AUDIO_StopWorkerQueued;
+
   BSP_AUDIO_OUT_Mute(0);
 
+  if (worker_expected == UX_FALSE)
+  {
+    UINT should_stop = UX_TRUE;
+    uint32_t audio_state = AUDIO_OUT_STATE_STOP;
+
+    if (BSP_AUDIO_OUT_GetState(0, &audio_state) == BSP_ERROR_NONE)
+    {
+      should_stop = (audio_state == AUDIO_OUT_STATE_PLAYING) ? UX_TRUE : UX_FALSE;
+    }
+
+    if (should_stop == UX_TRUE)
+    {
+      (void)BSP_AUDIO_OUT_Stop(0);
+    }
+  }
+
   USBD_AUDIO_BufferReset();
+
+  if (worker_expected != UX_FALSE)
+  {
+    USBD_AUDIO_StopWorkerQueued = UX_TRUE;
+  }
 
   USBD_AUDIO_StopForced = UX_TRUE;
 
@@ -853,6 +879,7 @@ static VOID USBD_AUDIO_BufferReset(VOID)
   USBD_AUDIO_StopPending = UX_FALSE;
   USBD_AUDIO_StopWaitBudgetMs = 0U;
   USBD_AUDIO_StopForced = UX_FALSE;
+  USBD_AUDIO_StopWorkerQueued = UX_FALSE;
 #endif
 
   if (USBD_AUDIO_SpaceSemaphoreReady != UX_FALSE)
@@ -1045,6 +1072,15 @@ VOID USBD_AUDIO_PlaybackStreamChange(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
     if (tx_queue_send(&ux_app_MsgQueue, &BufferCtl.state, TX_NO_WAIT) != TX_SUCCESS)
     {
       Error_Handler();
+    }
+
+    USBD_AUDIO_StopWorkerQueued = UX_TRUE;
+
+    if (pending_bytes == 0U)
+    {
+      USBD_AUDIO_StopForceComplete();
+
+      return;
     }
 
     USBD_AUDIO_StopWaitForCompletion(drain_budget);
