@@ -548,77 +548,84 @@ static VOID USBD_AUDIO_StopSemaphorePrepare(VOID)
 
 static VOID USBD_AUDIO_StopWaitForCompletion(ULONG timeout_ms)
 {
-  if ((USBD_AUDIO_StopSemaphoreReady != UX_FALSE) &&
-      (USBD_AUDIO_StopPending != UX_FALSE))
+  ULONG wait_limit_ticks = 0U;
+  ULONG poll_ticks = 0U;
+  ULONG start_tick = 0U;
+  ULONG elapsed_ticks;
+  ULONG remaining_ticks;
+  ULONG wait_slice;
+
+  if (USBD_AUDIO_StopSemaphoreReady == UX_FALSE)
   {
-    ULONG wait_limit_ticks;
-    ULONG poll_ticks;
-    ULONG start_tick;
-
-    if (timeout_ms == 0U)
-    {
-      timeout_ms = USBD_AUDIO_STOP_DRAIN_MIN_MS;
-    }
-
-    wait_limit_ticks = USBD_AUDIO_MillisecondsToTicks(timeout_ms);
-    if (wait_limit_ticks == 0U)
-    {
-      wait_limit_ticks = 1U;
-    }
-
-    poll_ticks = USBD_AUDIO_MillisecondsToTicks(1U);
-    if (poll_ticks == 0U)
-    {
-      poll_ticks = 1U;
-    }
-
-    if (poll_ticks > wait_limit_ticks)
-    {
-      poll_ticks = wait_limit_ticks;
-    }
-  }
-
-    start_tick = tx_time_get();
-
-    start_tick = tx_time_get();
-
-    while (USBD_AUDIO_StopPending != UX_FALSE)
-    {
-      ULONG elapsed_ticks;
-      ULONG remaining_ticks;
-      ULONG wait_slice;
-
-      elapsed_ticks = tx_time_get() - start_tick;
-      if (elapsed_ticks >= wait_limit_ticks)
-      {
-        break;
-      }
-
-      remaining_ticks = wait_limit_ticks - elapsed_ticks;
-      if (remaining_ticks == 0U)
-      {
-        break;
-      }
-
-      wait_slice = (remaining_ticks > poll_ticks) ? poll_ticks : remaining_ticks;
-      if (wait_slice == 0U)
-      {
-        wait_slice = 1U;
-      }
-
-      if (tx_semaphore_get(&USBD_AUDIO_StopSemaphore, wait_slice) != TX_SUCCESS)
-      {
-        continue;
-      }
-    }
-
     if (USBD_AUDIO_StopPending != UX_FALSE)
     {
       USBD_AUDIO_StopForceComplete();
     }
+
+    return;
   }
 
   if (USBD_AUDIO_StopPending == UX_FALSE)
+  {
+    USBD_AUDIO_StopWaitBudgetMs = 0U;
+    return;
+  }
+
+  if (timeout_ms == 0U)
+  {
+    timeout_ms = USBD_AUDIO_STOP_DRAIN_MIN_MS;
+  }
+
+  wait_limit_ticks = USBD_AUDIO_MillisecondsToTicks(timeout_ms);
+  if (wait_limit_ticks == 0U)
+  {
+    wait_limit_ticks = 1U;
+  }
+
+  poll_ticks = USBD_AUDIO_MillisecondsToTicks(1U);
+  if (poll_ticks == 0U)
+  {
+    poll_ticks = 1U;
+  }
+
+  if (poll_ticks > wait_limit_ticks)
+  {
+    poll_ticks = wait_limit_ticks;
+  }
+
+  start_tick = tx_time_get();
+
+  while (USBD_AUDIO_StopPending != UX_FALSE)
+  {
+    elapsed_ticks = tx_time_get() - start_tick;
+    if (elapsed_ticks >= wait_limit_ticks)
+    {
+      break;
+    }
+
+    remaining_ticks = wait_limit_ticks - elapsed_ticks;
+    if (remaining_ticks == 0U)
+    {
+      break;
+    }
+
+    wait_slice = (remaining_ticks > poll_ticks) ? poll_ticks : remaining_ticks;
+    if (wait_slice == 0U)
+    {
+      wait_slice = 1U;
+    }
+
+    if (tx_semaphore_get(&USBD_AUDIO_StopSemaphore, wait_slice) != TX_SUCCESS)
+    {
+      continue;
+    }
+  }
+
+  if (USBD_AUDIO_StopPending != UX_FALSE)
+  {
+    USBD_AUDIO_StopForceComplete();
+  }
+  else
   {
     USBD_AUDIO_StopWaitBudgetMs = 0U;
   }

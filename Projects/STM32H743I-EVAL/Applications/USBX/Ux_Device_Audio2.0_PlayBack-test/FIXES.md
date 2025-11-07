@@ -34,6 +34,10 @@ This document captures the issues addressed during the USB Audio Class 2.0 playb
 - **Symptom**: The 10-second pause resurfaced whenever the host started another track immediately after a forced stop because the pending stop never cleared fast enough, so the new open blocked until the control transfer timeout expired.
 - **Fix**: Consolidated the watchdog logic into `USBD_AUDIO_StopForceComplete()` so both the control path and the playback worker can reset the buffer, post the semaphore, and flag the forced stop. Startup now calls the helper if the previous stop is still pending, guaranteeing the state machine unlocks before opening the next stream. See `USBX/App/ux_device_audio_play.c`.
 
-## 9. Remaining work
+## 9. Stop watchdog fallback guard
+- **Symptom**: Builds without the stop semaphore or with a failed RTOS primitive allocation still waited the full USB control timeout because the watchdog path never ran.
+- **Fix**: `USBD_AUDIO_StopWaitForCompletion()` now bails out immediately when the stop semaphore is unavailable and calls `USBD_AUDIO_StopForceComplete()` so the buffer, DMA, and state flags reset before the host times out. The helper also short-circuits if the stop has already finished to keep the cached wait budget consistent. See `USBX/App/ux_device_audio_play.c`.
+
+## 10. Remaining work
 - Verify the stop-drain cap on actual hardware and adjust `USBD_AUDIO_STOP_DRAIN_MAX_MS` if the codec needs a longer mute window.
 - Collect USB analyzer traces to confirm the asynchronous feedback endpoint converges across every supported sample rate.
