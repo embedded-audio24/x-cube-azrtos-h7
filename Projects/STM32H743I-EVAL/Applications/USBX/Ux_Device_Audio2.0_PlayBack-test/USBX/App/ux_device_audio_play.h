@@ -96,7 +96,6 @@ typedef enum {
   PLAY_BUFFER_OFFSET_NONE,
   PLAY_BUFFER_OFFSET_HALF,
   PLAY_BUFFER_OFFSET_FULL,
-  PLAY_BUFFER_OFFSET_STOP,
 }BUFFER_StateTypeDef;
 
 /* Audio buffer control structure */

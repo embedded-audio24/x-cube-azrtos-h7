@@ -217,7 +217,7 @@ VOID audio_playback_thread_entry(ULONG thread_input)
 
           /* Reset local buffer memory */
           ux_utility_memory_set(local_frame_buffer1, 0, audio_buffer_size);
-          ux_utility_memory_set(local_frame_buffer2, 0, audio_buffer_size);
+          ux_utility_memory_set(local_frame_buffer1, 0, audio_buffer_size);
 
           audio_data_offset = 0U;
 
