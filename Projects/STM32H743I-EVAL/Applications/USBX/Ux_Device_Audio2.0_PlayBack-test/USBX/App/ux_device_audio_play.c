@@ -323,7 +323,7 @@ static VOID USBD_AUDIO_FeedbackStart(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_st
   USBD_AUDIO_FeedbackPGain = (LONG)(1L << (shift - 7U));
   USBD_AUDIO_FeedbackIGain = (LONG)(1L << (shift - 11U));
 
-  integral_limit = (LONG)(nominal / 4U);
+  integral_limit = (LONG)(nominal / 16U);
   if (integral_limit <= 0)
   {
     integral_limit = (LONG)(1L << (shift - 2U));
@@ -371,7 +371,7 @@ static VOID USBD_AUDIO_FeedbackUpdate(UX_DEVICE_CLASS_AUDIO_STREAM *audio_play_s
     return;
   }
 
-  queue_error_bytes = (LONG)queued_bytes - (LONG)(AUDIO_TOTAL_BUF_SIZE / 2U);
+  queue_error_bytes = (LONG)(AUDIO_TOTAL_BUF_SIZE / 2U) - (LONG)queued_bytes;
   queue_error_samples = queue_error_bytes / (LONG)USBD_AUDIO_FeedbackBytesPerSample;
 
   proportional = queue_error_samples * USBD_AUDIO_FeedbackPGain;
