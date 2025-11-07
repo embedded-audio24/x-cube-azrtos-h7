@@ -158,6 +158,12 @@ UINT MX_USBX_Device_Init(VOID *memory_ptr)
   audio_stream_parameter[audio_stream_index].ux_device_class_audio_stream_parameter_thread_entry
     = ux_device_class_audio_read_thread_entry;
 
+  audio_stream_parameter[audio_stream_index].ux_device_class_audio_stream_parameter_feedback_thread_stack_size
+    = UX_DEVICE_APP_THREAD_STACK_SIZE;
+
+  audio_stream_parameter[audio_stream_index].ux_device_class_audio_stream_parameter_feedback_thread_entry
+    = ux_device_class_audio_feedback_thread_entry;
+
   /* Set the parameters for audio device */
   audio_parameter.ux_device_class_audio_parameter_streams_nb  = USBD_AUDIO_STREAM_NMNBER;
   audio_parameter.ux_device_class_audio_parameter_streams     = audio_stream_parameter;
@@ -293,7 +299,17 @@ VOID USBX_APP_Device_Init(VOID)
   /* Set Tx FIFO 0 */
   HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, USBD_MAX_EP0_SIZE/4);
   /* Set Tx FIFO 1 */
-  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, USBD_AUDIO_PLAY_EPOUT_HS_MPS);
+  {
+    uint16_t feedback_fifo_words;
+
+    feedback_fifo_words = (uint16_t)((USBD_AUDIO_PLAY_EPFB_HS_MPS + 3U) / 4U);
+    if (feedback_fifo_words < 2U)
+    {
+      feedback_fifo_words = 2U;
+    }
+
+    HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, feedback_fifo_words);
+  }
   /* USER CODE END USB_Device_Init_PreTreatment_1 */
 
   /* Initialize the device controller driver*/
