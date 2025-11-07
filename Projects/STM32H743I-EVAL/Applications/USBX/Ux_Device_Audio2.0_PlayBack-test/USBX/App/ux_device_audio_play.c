@@ -629,6 +629,15 @@ static VOID USBD_AUDIO_StopWaitForCompletion(ULONG timeout_ms)
   {
     USBD_AUDIO_StopWaitBudgetMs = 0U;
   }
+
+  if (USBD_AUDIO_StopPending != UX_FALSE)
+  {
+    USBD_AUDIO_StopForceComplete();
+  }
+  else
+  {
+    USBD_AUDIO_StopWaitBudgetMs = 0U;
+  }
 }
 #endif
 
