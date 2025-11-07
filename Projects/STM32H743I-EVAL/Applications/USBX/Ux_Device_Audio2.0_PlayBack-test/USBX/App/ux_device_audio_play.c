@@ -576,6 +576,9 @@ static VOID USBD_AUDIO_StopWaitForCompletion(ULONG timeout_ms)
     {
       poll_ticks = wait_limit_ticks;
     }
+  }
+
+    start_tick = tx_time_get();
 
     start_tick = tx_time_get();
 
