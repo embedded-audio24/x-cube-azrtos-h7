@@ -413,6 +413,11 @@ uint16_t USBD_Get_Configuration_Number(uint8_t class_type, uint8_t interface_typ
 #define USBD_AUDIO_PLAY_EPOUT_HS_MPS                  28U
 #define USBD_AUDIO_PLAY_EPOUT_FS_BINTERVAL            1U
 #define USBD_AUDIO_PLAY_EPOUT_HS_BINTERVAL            1U
+#define USBD_AUDIO_PLAY_EPFB_ADDR                     0x81U
+#define USBD_AUDIO_PLAY_EPFB_FS_MPS                   3U
+#define USBD_AUDIO_PLAY_EPFB_HS_MPS                   4U
+#define USBD_AUDIO_PLAY_EPFB_FS_BINTERVAL             1U
+#define USBD_AUDIO_PLAY_EPFB_HS_BINTERVAL             4U
 
 #define USBD_AUDIO_CONTROL_INTERFACE_SIZE             sizeof(USBD_AUDIOCCSIfDescTypeDef)+          \
                                                       sizeof(USBD_AUDIOInputTerminalDescTypeDef)+  \
